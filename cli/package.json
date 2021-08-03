@@ -1,0 +1,24 @@
+{
+  "name": "youtube-downloader",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js -url https://www.youtube.com/ -mp3",
+    "test": "mocha"
+  },
+  "author": "pixelsquare",
+  "license": "MIT",
+  "dependencies": {
+    "async": "^3.2.0",
+    "cli-progress": "^3.9.0",
+    "miniget": "^4.2.1",
+    "progress-stream": "^2.0.0",
+    "sanitize-filename": "^1.6.3",
+    "youtube-mp3-downloader": "^0.7.7",
+    "ytdl-core": "^4.9.0"
+  },
+  "devDependencies": {
+    "mocha": "^9.0.3"
+  }
+}
