@@ -1,117 +1,200 @@
 'use strict'
 
-const async = require('async');
+const fs = require('fs');
+const path = require('path');
 const assert = require('assert');
-const YTDownloader = require('../index.js');
+const YTDownloader = require('../YoutubeDownloader.js');
+const { exec } = require('child_process');
+
+const url = 'https://www.youtube.com/watch?v=ig3Qa6IINYo';
 
 describe('Initializes with arguments', function() {
-    var downloader;
-    this.beforeEach(() => {
-        downloader = new YTDownloader();
-    });
 
     it('Empty argument should fail', function() {
-        return downloader.init().then(instance => {
-            assert(!instance, 'Instance should be null');
-            return instance;
-        }).then(assert.fail).catch(err => {
-            assert(err.message.indexOf('Invalid') >= 0, 'Error message must contain invalid');
+        const downloader = new YTDownloader({});
+        return downloader.getURLInfo().then(assert.fail).catch(err => {
+            assert(err.function.indexOf('getURLInfo') >= 0, 'Error message should contain the function name');
+            assert(err.message.indexOf('validate') >= 0, 'Error message should contain the function name');
         });
     });
 
-    it('Should require -url argument with valid url', function() {
-        return downloader.init('-url https://www.youtube.com').then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getURL();
-        }).then(url => {
-            assert.equal(url, 'https://www.youtube.com', 'URL should match');
-            return downloader.init('-o /local').then(instance => {
-                assert(!instance, 'Instance should be null');
-                return instance;
-            }).then(assert.fail).catch(err => {
-                assert(err.message.indexOf('required') >= 0, 'Error message must contain invalid');
-            });
+    it('Should fail on invalid url', function() {
+        const downloader = new YTDownloader({
+            url: 'https://www.google.com'
+        });
+
+        assert(downloader.getURL().indexOf('google') >= 0, 'URL should have the same id');
+
+        return downloader.getURLInfo().then(assert.fail).catch(err => {
+            assert(err.function.indexOf('getURLInfo') >= 0, 'Error message should contain the function name');
+            assert(err.message.indexOf('validate') >= 0, 'Error message should contain the function name');
         });
     });
 
-    it('Should require -o, -out, -output argument with path', function() {
-        // Test -o
-        return downloader.init('-url https://www.youtube.com -o').then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getOutputPath();
-        }).then(path => {
-            assert(path.indexOf('output') >= 0, 'Output path should contain ouput');
-            return downloader.init('-url https://www.youtube.com -o local');
-        }).then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getOutputPath();
-        }).then(path => {
-            assert.equal(path, 'local', 'Output path should be the same');
-            // Test -out
-            return downloader.init('-url https://www.youtube.com -out');
-        }).then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getOutputPath();
-        }).then(path => {
-            assert(path.indexOf('output') >= 0, 'Output path should contain ouput');
-            return downloader.init('-url https://www.youtube.com -out local');
-        }).then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getOutputPath();
-        }).then(path => {
-            assert.equal(path, 'local', 'Output path should be the same');
-            // Test -output       
-            return downloader.init('-url https://www.youtube.com -output');
-        }).then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getOutputPath();
-        }).then(path => {
-            assert(path.indexOf('output') >= 0, 'Output path should contain ouput');
-            return downloader.init('-url https://www.youtube.com -output local');
-        }).then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getOutputPath();
-        }).then(path => {
-            assert.equal(path, 'local', 'Output path should be the same');
+    it('--url', function() {
+        const downloader = new YTDownloader({
+            url: url
+        });
+        
+        assert(downloader.getURL().indexOf('ig3Qa6IINYo') >= 0, 'URL should have the same id');
+        
+        return downloader.getURLInfo().then(result => {
+            assert(result, 'Result should not be empy or nulled');
+            assert(result.title, 'Result should contain title');
+            assert(result.description, 'Result should contain description');
         });
     });
 
-    it('Can have -name argument but not required', function() {
-        return downloader.init('-url https://www.youtube.com -name').then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getName();
-        }).then(async name => {
-            assert.equal(name, '', 'Should be empty string');
-            return downloader.init('-url https://www.youtube.com -name testname');
-        }).then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getName();
-        }).then(name => {
-            assert.equal(name, 'testname', 'Name should match');
+    it('Should fail on invalid ouput path', function() {
+        const downloader = new YTDownloader({
+            url: url,
+            output: path.resolve('none_existing_dir')
+        });
+
+        assert(downloader.getOutputPath().indexOf('out') >= 0, 'Output path should have the same directory');
+        
+        return downloader.download().then(assert.fail).catch(err => {
+            assert(err.function.indexOf('download') >= 0, 'Error message should contain the function name');
+            assert(err.message.indexOf('Invalid') >= 0, 'Error message should contain invalid');
         });
     });
 
-    it('Can have -mp3 argument but not required', function() {
-        return downloader.init('-url https://www.youtube.com -mp3').then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.isMP3();
-        }).then(result => {
-            assert(result, 'Result should be true');
+    it('-o, --output', function() {
+        const downloader = new YTDownloader({
+            url: url,
+            output: path.resolve('out')
         });
-    })
+
+        if(!fs.existsSync(path.resolve('out'))) {
+            fs.mkdirSync(path.resolve('out'));
+        }
+
+        assert(downloader.getOutputPath().indexOf('out') >= 0, 'Output path should have the same directory');
+        
+        this.timeout(90000);
+        return downloader.download().then(result => {
+            assert(result, 'Resuld should not be nulled');
+
+            const outFile = fs.existsSync(path.resolve('out/out.mp4'));
+            const aFile = fs.existsSync(path.resolve('out/a.mp4'));
+            const vFile = fs.existsSync(path.resolve('out/v.mp4'));
+
+            assert(outFile, 'Out file should exist');
+            assert(aFile, 'Audio file should exist');
+            assert(vFile, 'Video file should exist');
+
+            if(aFile && vFile && outFile) {
+                fs.rmdirSync(path.resolve('out'), { recursive: true });
+            }
+        });
+    });
+
+    it('--title', function() {
+        const title = 'Sample Video Title';
+        const downloader = new YTDownloader({
+            url: url,
+            output: path.resolve('out'),
+            title: title
+        });
+
+        if(!fs.existsSync(path.resolve('out'))) {
+            fs.mkdirSync(path.resolve('out'));
+        }
+
+        assert(downloader.getOutputPath().indexOf('out') >= 0, 'Output path should have the same directory');
+        assert(downloader.getTitle().indexOf(title) >= 0, 'Title should be the same');
+        
+        this.timeout(90000);
+        return downloader.download().then(result => {
+            assert(result, 'Resuld should not be nulled');
+            
+            const outFile = fs.existsSync(path.resolve(`out/${title}.mp4`));
+            const aFile = fs.existsSync(path.resolve('out/a.mp4'));
+            const vFile = fs.existsSync(path.resolve('out/v.mp4'));
+
+            assert(outFile, 'Out file should exist');
+            assert(aFile, 'Audio file should exist');
+            assert(vFile, 'Video file should exist');
+
+            if(aFile && vFile && outFile) {
+                fs.rmdirSync(path.resolve('out'), { recursive: true });
+            }
+        });
+    });
+
+    it('--preset', function() {
+        const preset = 'low-res';
+        const downloader = new YTDownloader({
+            url: url,
+            output: path.resolve('out'),
+            preset: preset
+        });
+
+        if(!fs.existsSync(path.resolve('out'))) {
+            fs.mkdirSync(path.resolve('out'));
+        }
+
+        assert(downloader.getOutputPath().indexOf('out') >= 0, 'Output path should have the same directory');
+        assert(downloader.getPreset().indexOf(preset) >= 0, 'Preset should be the same');
+        
+        this.timeout(90000);
+        return downloader.download().then(result => {
+            assert(result, 'Resuld should not be nulled');
+            
+            const outFile = fs.existsSync(path.resolve('out/out.mp4'));
+            const aFile = fs.existsSync(path.resolve('out/a.mp4'));
+            const vFile = fs.existsSync(path.resolve('out/v.mp4'));
+
+            assert(outFile, 'Out file should exist');
+            assert(aFile, 'Audio file should exist');
+            assert(vFile, 'Video file should exist');
+
+            const ffprobePath = path.resolve('../ffmpeg/bin/ffprobe.exe');
+            const outputPath = path.resolve('out/out.mp4');
+            const command = `${ffprobePath} -v quiet -print_format json -show_format -show_streams ${outputPath}`;
+            
+            exec(command, (err, stdout, stderr) => {
+                if(err) {
+                    console.log(`Error: ${err}`);
+                }
+
+                const videoDetails = JSON.parse(stdout);
+
+                const audio = videoDetails.streams.filter(filter => filter.codec_type === 'audio')[0];
+                const video = videoDetails.streams.filter(filter => filter.codec_type === 'video')[0];
+
+                assert(video.codec_name, 'vp9', 'Codec must be vp9 for low resolution');
+
+                if(aFile && vFile && outFile) {
+                    fs.rmdirSync(path.resolve('out'), { recursive: true });
+                }
+            }); 
+
+            console.log(result);
+        });
+    });
+
+    // it('Can have -mp3 argument but not required', function() {
+    //     return downloader.init('-url https://www.youtube.com -mp3').then(instance => {
+    //         assert(instance, 'Instance should not be null');
+    //         return instance.isMP3();
+    //     }).then(result => {
+    //         assert(result, 'Result should be true');
+    //     });
+    // })
 });
+
 
 describe('Getting URL information', function() {
     var downloader;
     this.beforeEach(() => {
-        downloader = new YTDownloader();
+        downloader = new YTDownloader({
+            url: url
+        });
     });
 
     it('Should be able to get information from url', function() {
-        return downloader.init('-url https://www.youtube.com/watch?v=Y2rDb4Ur2dw').then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getURLInfo();
-        }).then(info => {
+        return downloader.getURLInfo().then(info => {
             assert(info, 'Result should not be nulled');
             assert(info.title, 'Should contain video title');
             assert(info.description, 'Should contain video description');
@@ -119,10 +202,7 @@ describe('Getting URL information', function() {
     });
 
     it('Should be able to get basic information from url', function() {
-        return downloader.init('-url https://www.youtube.com/watch?v=Y2rDb4Ur2dw').then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getURLBasicInfo();
-        }).then(info => {
+        return downloader.getURLBasicInfo().then(info => {
             assert(info, 'Result should not be nulled');
             assert(info.title, 'Should contain video title');
             assert(info.description, 'Should contain video description');
@@ -130,44 +210,39 @@ describe('Getting URL information', function() {
     });
 
     it('Should be able to get video format from url', function() {
-        return downloader.init('-url https://www.youtube.com/watch?v=Y2rDb4Ur2dw').then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.getVideoFormat();
-        }).then(info => {
+        return downloader.getVideoFormat().then(info => {
             assert(info, 'Result should not be nulled');
         });
     });
 });
 
-describe('Downloading a video', function() {
-    var downloader;
-    this.beforeEach(() => {
-        downloader = new YTDownloader();
-    });
+// describe('Downloading a video', function() {
+//     var downloader;
+//     this.beforeEach(() => {
+//         downloader = new YTDownloader({
+//             url: url
+//         });
+//     });
 
-    this.timeout('60s')
+//     this.timeout(90000)
 
-    it('Should be able to download a video', function() {
-        return downloader.init('-url https://www.youtube.com/watch?v=Y2rDb4Ur2dw').then(instance => {
-            assert(instance, 'Instance should not be null');
-            return instance.download();
-        }).then(result => {
-            assert(result, 'Result should not be nulled');
-            console.log(result);
-        });
-        // return downloader.deployed().then(function(instance) {
-        //     downloaderInstance = instance;
-        //     const promise = new Promise((resolve, reject) => {
-        //         downloaderInstance.download('https://www.youtube.com/watch?v=Y2rDb4Ur2dw', function(result) {
-        //             resolve(result);
-        //         });
-        //     });
-        //     return promise;
-        // }).then(function(result) {
-        //     assert(result, 'Result should not be nulled');
-        //     assert(result.title, 'Should contain video title');
-        //     assert(result.description, 'Should contain video description');
-        // });
-    });
-});
+//     it('Should be able to download a video', function() {
+//         return downloader.download().then(result => {
+//             assert(result, 'Result should not be nulled');
+//         });
+//         // return downloader.deployed().then(function(instance) {
+//         //     downloaderInstance = instance;
+//         //     const promise = new Promise((resolve, reject) => {
+//         //         downloaderInstance.download('https://www.youtube.com/watch?v=Y2rDb4Ur2dw', function(result) {
+//         //             resolve(result);
+//         //         });
+//         //     });
+//         //     return promise;
+//         // }).then(function(result) {
+//         //     assert(result, 'Result should not be nulled');
+//         //     assert(result.title, 'Should contain video title');
+//         //     assert(result.description, 'Should contain video description');
+//         // });
+//     });
+// });
 

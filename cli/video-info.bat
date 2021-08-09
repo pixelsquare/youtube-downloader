@@ -1,6 +1,6 @@
 @echo off
 
-set videoFile="out60"
+set videoFile="out"
 set ext="mp4"
 
 echo.
@@ -11,6 +11,7 @@ echo.
 echo *** DETAILED INFO ***
 echo.
 
-"../ffmpeg/bin/ffprobe.exe" -v error -select_streams v:0 -show_entries stream=width,height,duration,bit_rate,codec_name,r_frame_rate,sample_aspect_ratio,display_aspect_ratio -of default=noprint_wrappers=1 "output/%videoFile%.%ext%"
+REM "../ffmpeg/bin/ffprobe.exe" -v error -select_streams v:0 -show_entries stream=width,height,duration,bit_rate,codec_name,r_frame_rate,sample_aspect_ratio,display_aspect_ratio -of default=noprint_wrappers=1 "output/%videoFile%.%ext%"
+"../ffmpeg/bin/ffprobe.exe" -v quiet -print_format json -show_format -show_streams "output/%videoFile%.%ext%"
 
 echo.
