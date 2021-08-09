@@ -5,18 +5,19 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js -url https://www.youtube.com/ -mp3",
-    "test": "mocha"
+    "test": "mocha --timeout 5000"
   },
   "author": "pixelsquare",
   "license": "MIT",
   "dependencies": {
     "async": "^3.2.0",
     "cli-progress": "^3.9.0",
-    "miniget": "^4.2.1",
-    "progress-stream": "^2.0.0",
+    "ffmpeg": "0.0.4",
+    "fluent-ffmpeg": "^2.1.2",
     "sanitize-filename": "^1.6.3",
-    "youtube-mp3-downloader": "^0.7.7",
-    "ytdl-core": "^4.9.0"
+    "smart-truncate": "^1.0.1",
+    "speedometer": "^1.1.0",
+    "ytdl-core": "^4.9.1"
   },
   "devDependencies": {
     "mocha": "^9.0.3"
