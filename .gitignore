@@ -103,4 +103,9 @@ dist
 # TernJS port file
 .tern-port
 
+# FFmpeg binary
 /ffmpeg
+
+# CLI ignored directories
+/cli/tmp
+/cli/output
