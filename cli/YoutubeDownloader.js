@@ -24,6 +24,8 @@ const { SingleBar, Presets } = require('cli-progress');
 // Add Force flag argument (-f)
 // - Forcing the quality of the video to bump up or down
 
+// TODO: Add metadata options
+
 class YoutubeDownloader extends events.EventEmitter {
 
     constructor(options) { 
@@ -36,7 +38,7 @@ class YoutubeDownloader extends events.EventEmitter {
         this.ext = options.ext || 'mp4'; // TODO
         this.preset = options.preset || 'mid-res';
         this.itag = options.itag || -1; // TODO
-        this.isMp3 = options.mp3 || false; // TODO
+        this.isMp3 = options.isMp3 || false;
         this.force = options.force || false; // TODO
 
         this.totalPercentage = 0;
@@ -47,43 +49,6 @@ class YoutubeDownloader extends events.EventEmitter {
         }, 
         Presets.shades_classic);
     }
-
-    // init(args) {
-    //     if(!args) {
-    //         return Promise.reject({ message: 'Invalid or empty arguments!'});
-    //     }
-
-    //     var argsArray = args.split(' ');
-
-    //     this.isMp3 = argsArray.includes('-mp3');
-        
-    //     if(argsArray.includes('-name') && (argsArray.indexOf('-name') + 1) < argsArray.length) {
-    //         this.name = argsArray[argsArray.indexOf('-name') + 1];
-    //     }
-
-    //     if(argsArray.includes('-url') && (argsArray.indexOf('-url') + 1) < argsArray.length) {
-    //         this.url = argsArray[argsArray.indexOf('-url') + 1];
-
-    //         if(!this.url.includes('https://www.youtube.com')) {
-    //             return Promise.reject({ function: 'init', message: 'Invalid URL Format!', payload: args });
-    //         }
-    //     }
-    //     else {
-    //         return Promise.reject({ function: 'init', message: 'URL is required', payload: args });
-    //     }
-
-    //     if(argsArray.includes('-o')) {
-    //         this.outputPath = ((argsArray.indexOf('-o') + 1) >= argsArray.length) ? path.resolve('output') : argsArray[argsArray.indexOf('-o') + 1];
-    //     }
-    //     else if(argsArray.includes('-out')) {
-    //         this.outputPath = ((argsArray.indexOf('-out') + 1) >= argsArray.length) ? path.resolve('output') : argsArray[argsArray.indexOf('-out') + 1];
-    //     }
-    //     else if(argsArray.includes('-output')) {
-    //         this.outputPath = ((argsArray.indexOf('-output') + 1) >= argsArray.length) ? path.resolve('output') : argsArray[argsArray.indexOf('-output') + 1];
-    //     }
-
-    //     return Promise.resolve(this);
-    // }
 
     getURLInfo() {
         const self = this;
@@ -220,20 +185,6 @@ class YoutubeDownloader extends events.EventEmitter {
             self.emit('error', error);
         }
 
-        // var result = [];
-
-        // info.formats.filter(format => format.container === 'mp4').forEach(a => {
-        //     result.push({
-        //         itag: a.itag,
-        //         qualityLabel: a.qualityLabel,
-        //         quality: a.quality,
-        //         fps: a.fps,
-        //         width: a.width,
-        //         height: a.height,
-        //         url: a.url
-        //     });
-        // });
-
         return info.formats;
     }
 
@@ -256,20 +207,7 @@ class YoutubeDownloader extends events.EventEmitter {
             self.emit('error', error);
         }
 
-        var eta = 0;
-        var delta = 0;
-        var speed = speedometer(5000);
-        const toMB = i => (parseInt(i) / 1024 / 1024).toFixed(2); // Byte to KB to MB
-
-        var totalDownloaded = 0;
-        const totalLength = 300;
-
-        const time = 300;
-        var nextUpdate = Date.now() + time;
-
-        self.cliprogress.start(totalLength, self.totalPercentage, { filename: truncate(info.videoDetails.title, 20, { position: 21}), speed: "N/A" });
-
-        await async.series([
+        const tasks = [
             async function() {
                 const stream = ytdl.downloadFromInfo(info, { quality: 'highestaudio' });
                 stream.pipe(fs.createWriteStream(path.join(self.outputPath, sanitize('a.mp4'))));
@@ -345,15 +283,33 @@ class YoutubeDownloader extends events.EventEmitter {
 
                 await promise;
             }
-        ]);
+        ];
+
+        if(self.isMp3) {
+            tasks.splice(1, 1); // Remove video file when we only want audio clip
+        }
+
+        var eta = 0;
+        var delta = 0;
+        var speed = speedometer(5000);
+        const toMB = i => (parseInt(i) / 1024 / 1024).toFixed(2); // Byte to KB to MB
+
+        var totalDownloaded = 0;
+        const totalLength = 100 + (tasks.length * 100);
+
+        const time = 300; // Update time in milliseconds
+        var nextUpdate = Date.now() + time;
+
+        self.cliprogress.start(totalLength, self.totalPercentage, { filename: truncate(info.videoDetails.title, 20, { position: 21}), speed: "N/A" });
+
+        await async.series(tasks);
 
         var title = self.title || info.videoDetails.title;
+        const outputPath = path.join(self.outputPath, sanitize(title) + (self.isMp3 ? '.mp3' : '.mp4'));
 
-        // self.cliprogress.stop();
         await self.mergeMediaFiles(title);
 
         const ffprobePath = path.resolve('../ffmpeg/bin/ffprobe.exe');
-        const outputPath = path.resolve('out/out.mp4');
         const command = `${ffprobePath} -v quiet -print_format json -show_format -show_streams ${outputPath}`;
         
         const promise = new Promise((resolve) => {
@@ -368,22 +324,35 @@ class YoutubeDownloader extends events.EventEmitter {
                 const video = videoDetails.streams.filter(filter => filter.codec_type === 'video')[0];
     
                 result.outputPath = videoDetails.format.filename;
-                result.videoInfo = {
-                    codec: video.codec_name,
-                    width: video.width,
-                    height: video.height,
-                    aspectRatio: video.display_aspect_ratio,
-                    size: toMB(videoDetails.format.size) + ' MB',
-                    duration: videoDetails.format.duration,
-                    bitrate: video.bit_rate
-                };
+
+                if(self.isMp3) {
+                    result.info = {
+                        codec: audio.codec_name,
+                        channels: audio.channels,
+                        channelLayout: audio.channel_layout,
+                        duration: audio.duration,
+                        bitrate: audio.bit_rate,
+                        encoding: audio.tags.encoder
+                    };
+                }
+                else {
+                    result.info = {
+                        codec: video.codec_name,
+                        width: video.width,
+                        height: video.height,
+                        aspectRatio: video.display_aspect_ratio,
+                        size: toMB(videoDetails.format.size) + ' MB',
+                        duration: videoDetails.format.duration,
+                        bitrate: video.bit_rate
+                    };
+                }
 
                 resolve();
             });
         });
 
-        result.title = title;
-        result.originalTitle = info.videoDetails.title;
+        result.filename = title;
+        result.title = info.videoDetails.title;
         result.description = info.videoDetails.description;
         result.metadata = {
             author: info.videoDetails.author.name,
@@ -408,19 +377,34 @@ class YoutubeDownloader extends events.EventEmitter {
 
         const videoPath = path.join(self.outputPath, 'v.mp4');
         const audioPath = path.join(self.outputPath, 'a.mp4');
-        const outPath = path.join(self.outputPath, sanitize(title) + '.mp4');
+        const outputPath = path.join(self.outputPath, sanitize(title) + (self.isMp3 ? '.mp3' : '.mp4'));
 
         var eta = 0;
         var speed = speedometer(5000);
         const toMB = i => (parseInt(i) / 1024).toFixed(2); // KB to MB
 
+        // TODO
+        // const outputOptions = [
+        //     '-metadata', 'title=' + title,
+        //     '-metadata', 'artist=' + artist
+        // ];
+
         const process = ffmpeg({
             presets: presetsPath
         });
 
-        process.addInput(videoPath);
-        process.addInput(audioPath);
-        process.preset(self.preset);
+        if(self.isMp3) {
+            process.addInput(audioPath);
+            process.preset('mp3');
+        }
+        else {
+            process.addInput(videoPath);
+            process.addInput(audioPath);
+            process.preset(self.preset);
+        }
+
+        // TODO
+        // process.outputOptions(...outputOptions);
 
         // process.on('start', command => {
         //     // console.log(command);
@@ -452,7 +436,7 @@ class YoutubeDownloader extends events.EventEmitter {
             });
         });
 
-        process.saveToFile(outPath);
+        process.saveToFile(outputPath);
 
         var promise = new Promise((resolve) => {
             process.on('end', (stdout, stderr) => {
