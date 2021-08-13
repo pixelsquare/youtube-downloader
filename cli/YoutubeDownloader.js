@@ -24,8 +24,6 @@ const { SingleBar, Presets } = require('cli-progress');
 // Add Force flag argument (-f)
 // - Forcing the quality of the video to bump up or down
 
-// TODO: Add metadata options
-
 class YoutubeDownloader extends events.EventEmitter {
 
     constructor(options) { 
@@ -192,6 +190,7 @@ class YoutubeDownloader extends events.EventEmitter {
         const self =  this;
 
         var result = { url: url };
+        var metadata = {};
         var info = null;
 
         try {
@@ -206,6 +205,11 @@ class YoutubeDownloader extends events.EventEmitter {
 
             self.emit('error', error);
         }
+
+        metadata.title = info.videoDetails.media.song || info.videoDetails.title;
+        metadata.artist = info.videoDetails.media.artist;
+        metadata.author = info.videoDetails.author.name;
+        metadata.description = info.videoDetails.description;
 
         const tasks = [
             async function() {
@@ -259,7 +263,7 @@ class YoutubeDownloader extends events.EventEmitter {
 
                     if(Date.now() >= nextUpdate) {
                         eta = Math.round(total - downloaded) / speed(chunkSize);
-                        self.cliprogress.update(self.totalPercentage + parseInt(percentage), {
+                        self.cliprogress.update(Math.round(self.totalPercentage + parseInt(percentage)), {
                             speed: toMB(speed(delta)),
                             eta: eta
                         });
@@ -307,7 +311,7 @@ class YoutubeDownloader extends events.EventEmitter {
         var title = self.title || info.videoDetails.title;
         const outputPath = path.join(self.outputPath, sanitize(title) + (self.isMp3 ? '.mp3' : '.mp4'));
 
-        await self.mergeMediaFiles(title);
+        await self.mergeMediaFiles(title, metadata);
 
         const ffprobePath = path.resolve('../ffmpeg/bin/ffprobe.exe');
         const command = `${ffprobePath} -v quiet -print_format json -show_format -show_streams ${outputPath}`;
@@ -365,7 +369,7 @@ class YoutubeDownloader extends events.EventEmitter {
         return result;
     }
 
-    async mergeMediaFiles(title) {
+    async mergeMediaFiles(title, metadata) {
         const self = this;
 
         const presetsPath = path.resolve('presets');
@@ -383,12 +387,6 @@ class YoutubeDownloader extends events.EventEmitter {
         var speed = speedometer(5000);
         const toMB = i => (parseInt(i) / 1024).toFixed(2); // KB to MB
 
-        // TODO
-        // const outputOptions = [
-        //     '-metadata', 'title=' + title,
-        //     '-metadata', 'artist=' + artist
-        // ];
-
         const process = ffmpeg({
             presets: presetsPath
         });
@@ -402,6 +400,16 @@ class YoutubeDownloader extends events.EventEmitter {
             process.addInput(audioPath);
             process.preset(self.preset);
         }
+
+        const outputOptions = [
+            '-id3v2_version', '4',
+            '-metadata', `title=${metadata.title}`,
+            '-metadata', `artist=${metadata.artist}`,
+            '-metadata', `author=${metadata.author}`,
+            '-metadata', `description=${metadata.description}`,
+        ];
+
+        process.outputOptions(...outputOptions);
 
         // TODO
         // process.outputOptions(...outputOptions);
@@ -430,7 +438,7 @@ class YoutubeDownloader extends events.EventEmitter {
             eta = Math.round(info.targetSize - info.currentKbps) / speed(info.currentKbps);
             percentage = info.percent;
 
-            self.cliprogress.update(self.totalPercentage + percentage, {
+            self.cliprogress.update(Math.round(self.totalPercentage + percentage), {
                 speed: toMB(speed(info.currentKbps)),
                 eta: eta
             });
@@ -441,7 +449,7 @@ class YoutubeDownloader extends events.EventEmitter {
         var promise = new Promise((resolve) => {
             process.on('end', (stdout, stderr) => {
                 self.totalPercentage += percentage;
-                self.cliprogress.update(self.totalPercentage, {
+                self.cliprogress.update(Math.round(self.totalPercentage), {
                     speed: 0,
                     eta: 0
                 });
