@@ -53,20 +53,8 @@ const optionDefinitions = [
     typeLabel: '{underline preset}'
   },
   {
-    name: 'itag',
-    description: 'Video itag.\n',
-    type: Number,
-    typeLabel: '{underline itag}'
-  },
-  {
     name: 'mp3',
     description: 'Download audio only.\n',
-    type: Boolean
-  },
-  {
-    name: 'force',
-    description: 'Force video encoding.\n',
-    alias: 'f',
     type: Boolean
   }
 ]
