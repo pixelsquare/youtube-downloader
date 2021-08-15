@@ -6,6 +6,8 @@ const events = require('events');
 
 const async = require('async');
 const ytdl = require('ytdl-core');
+const chalk = require('chalk');
+const prompts = require('prompts');
 const ffmpeg = require('fluent-ffmpeg');
 const speedometer = require('speedometer');
 const sanitize = require('sanitize-filename');
@@ -32,12 +34,14 @@ class YoutubeDownloader extends events.EventEmitter {
         this.url = options.url;
         this.title = options.title || 'out';
         this.outputPath = options.output || path.resolve('output');
-        this.quality = options.quality || '320p'; // TODO
-        this.ext = options.ext || 'mp4'; // TODO
+        this.quality = options.quality;
+        this.ext = options.ext || 'mp4';
         this.preset = options.preset || 'mid-res';
-        this.itag = options.itag || -1; // TODO
         this.isMp3 = options.isMp3 || false;
-        this.force = options.force || false; // TODO
+
+        if(this.isMp3) {
+            this.ext = 'mp3';
+        }
 
         this.totalPercentage = 0;
         this.cliprogress = new SingleBar({ 
@@ -60,7 +64,6 @@ class YoutubeDownloader extends events.EventEmitter {
             payload: self.url 
         };
 
-        // self.emit('error', error);
         return Promise.reject(error);
     }
 
@@ -76,7 +79,6 @@ class YoutubeDownloader extends events.EventEmitter {
             payload: self.url 
         };
 
-        // self.emit('error', error);
         return Promise.reject(error);
     }
 
@@ -92,7 +94,21 @@ class YoutubeDownloader extends events.EventEmitter {
             payload: self.url 
         };
 
-        // self.emit('error', error);
+        return Promise.reject(error);
+    }
+
+    getVideoQuality() {
+        const self = this;
+        if(self.url && ytdl.validateURL(self.url)) {
+            return self.getVideoQualityAsync(self.url);
+        }
+
+        const error = { 
+            function: 'getVideoFormat', 
+            message: 'Failed to validate URL', 
+            payload: self.url 
+        };
+
         return Promise.reject(error);
     }
 
@@ -106,7 +122,6 @@ class YoutubeDownloader extends events.EventEmitter {
                 payload: self.url 
             };
             
-            // self.emit('error', error);
             return Promise.reject(error);
         }
 
@@ -120,7 +135,6 @@ class YoutubeDownloader extends events.EventEmitter {
             payload: self.url 
         };
         
-        // self.emit('error', error);
         return Promise.reject(error);
     }
 
@@ -186,6 +200,33 @@ class YoutubeDownloader extends events.EventEmitter {
         return info.formats;
     }
 
+    async getVideoQualityAsync(url) {
+        const self = this;
+        var info = null;
+
+        try {
+            info = await ytdl.getInfo(url);
+        }
+        catch(err) {
+            const error = { 
+                function: 'getVideoQualityAsync', 
+                message: 'Failed to get info from URL', 
+                payload: err.message
+            };
+
+            self.emit('error', error);
+        }
+
+        var result = [];
+        info.formats.forEach(i => {
+            if(i.qualityLabel && !result.includes(i.qualityLabel)) {
+                result.push(i.qualityLabel)
+            }
+        });
+        
+        return result;
+    }
+
     async downloadAsync(url) {
         const self =  this;
 
@@ -204,6 +245,46 @@ class YoutubeDownloader extends events.EventEmitter {
             };
 
             self.emit('error', error);
+        }
+
+        // TODO: Optimize / Refactor
+        var qualityList = [];
+        info.formats.forEach(i => {
+            if(i.qualityLabel && !qualityList.includes(i.qualityLabel)) {
+                qualityList.push({
+                    itag: i.itag,
+                    quality: i.qualityLabel,
+                    container: i.container
+                });
+            }
+        });
+
+        qualityList.sort((a, b) => parseInt(b.itag) - parseInt(a.itag));
+
+        var quality = [];
+        qualityList.forEach(i => {
+            if(!quality.some(e => e.quality === i.quality)) {
+                quality.push(i);
+            }
+        });
+
+        quality.sort((a, b) => parseInt(b.quality) - parseInt(a.quality));
+
+        var choices = [];
+        quality.forEach(i => {
+            choices.push({ title: i.quality, value: i.itag });
+        })
+
+        if(self.quality && !qualityList.includes(self.quality)) {
+            console.log('\n' + chalk.bgRed.bold(`Selected video quality does not exist. "${self.quality}"`));
+            const response = await prompts({
+                type: 'select',
+                name: 'qualityResponse',
+                message: `Please select quality:`,
+                choices: choices
+            });
+
+            self.quality = response.qualityResponse;
         }
 
         metadata.title = info.videoDetails.media.song || info.videoDetails.title;
@@ -251,7 +332,7 @@ class YoutubeDownloader extends events.EventEmitter {
                 await promise;
             },
             async function() {
-               const stream = ytdl.downloadFromInfo(info, { quality: 'highestvideo' });
+               const stream = ytdl.downloadFromInfo(info, { quality: self.quality ?? 'highestvideo' });
                stream.pipe(fs.createWriteStream(path.join(self.outputPath, sanitize('v.mp4'))));
 
                 var percentage = 0;
@@ -309,7 +390,7 @@ class YoutubeDownloader extends events.EventEmitter {
         await async.series(tasks);
 
         var title = self.title || info.videoDetails.title;
-        const outputPath = path.join(self.outputPath, sanitize(title) + (self.isMp3 ? '.mp3' : '.mp4'));
+        const outputPath = path.join(self.outputPath, sanitize(title + '.' + self.ext));
 
         await self.mergeMediaFiles(title, metadata);
 
@@ -381,7 +462,7 @@ class YoutubeDownloader extends events.EventEmitter {
 
         const videoPath = path.join(self.outputPath, 'v.mp4');
         const audioPath = path.join(self.outputPath, 'a.mp4');
-        const outputPath = path.join(self.outputPath, sanitize(title) + (self.isMp3 ? '.mp3' : '.mp4'));
+        const outputPath = path.join(self.outputPath, sanitize(title + '.' + self.ext));
 
         var eta = 0;
         var speed = speedometer(5000);
@@ -410,9 +491,6 @@ class YoutubeDownloader extends events.EventEmitter {
         ];
 
         process.outputOptions(...outputOptions);
-
-        // TODO
-        // process.outputOptions(...outputOptions);
 
         // process.on('start', command => {
         //     // console.log(command);
@@ -460,39 +538,6 @@ class YoutubeDownloader extends events.EventEmitter {
 
         await promise;
     }
-
-    getURL() {
-        return this.url;
-    }
-
-    getTitle() {
-        return this.title;
-    }
-
-    getOutputPath() {
-        return this.outputPath;
-    }
-
-    getQuality() {
-        return this.quality;
-    }
-
-    getPreset() {
-        return this.preset;
-    }
-
-    getItag() {
-        return this.itag;
-    }
-
-    isMP3() {
-        return this.isMp3;
-    }
-
-    forced() {
-        return this.force;
-    }
-
 };
 
 module.exports = YoutubeDownloader;
