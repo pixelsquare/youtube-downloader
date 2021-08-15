@@ -23,7 +23,7 @@ describe('Initializes with arguments', function() {
             url: 'https://www.google.com'
         });
 
-        assert(downloader.getURL().indexOf('google') >= 0, 'URL should have the same id');
+        assert(downloader.url.indexOf('google') >= 0, 'URL should have the same id');
 
         return downloader.getURLInfo().then(assert.fail).catch(err => {
             assert(err.function.indexOf('getURLInfo') >= 0, 'Error message should contain the function name');
@@ -36,7 +36,7 @@ describe('Initializes with arguments', function() {
             url: url
         });
         
-        assert(downloader.getURL().indexOf('ig3Qa6IINYo') >= 0, 'URL should have the same id');
+        assert(downloader.url.indexOf('ig3Qa6IINYo') >= 0, 'URL should have the same id');
         
         return downloader.getURLInfo().then(result => {
             assert(result, 'Result should not be empy or nulled');
@@ -51,7 +51,7 @@ describe('Initializes with arguments', function() {
             output: path.resolve('none_existing_dir')
         });
 
-        assert(downloader.getOutputPath().indexOf('out') >= 0, 'Output path should have the same directory');
+        assert(downloader.outputPath.indexOf('out') >= 0, 'Output path should have the same directory');
         
         return downloader.download().then(assert.fail).catch(err => {
             assert(err.function.indexOf('download') >= 0, 'Error message should contain the function name');
@@ -69,7 +69,7 @@ describe('Initializes with arguments', function() {
     //         fs.mkdirSync(path.resolve('out'));
     //     }
 
-    //     assert(downloader.getOutputPath().indexOf('out') >= 0, 'Output path should have the same directory');
+    //     assert(downloader.outputPath.indexOf('out') >= 0, 'Output path should have the same directory');
         
     //     this.timeout(90000);
     //     return downloader.download().then(result => {
@@ -101,8 +101,8 @@ describe('Initializes with arguments', function() {
     //         fs.mkdirSync(path.resolve('out'));
     //     }
 
-    //     assert(downloader.getOutputPath().indexOf('out') >= 0, 'Output path should have the same directory');
-    //     assert(downloader.getTitle().indexOf(title) >= 0, 'Title should be the same');
+    //     assert(downloader.outputPath.indexOf('out') >= 0, 'Output path should have the same directory');
+    //     assert(downloader.title.indexOf(title) >= 0, 'Title should be the same');
         
     //     this.timeout(90000);
     //     return downloader.download().then(result => {
@@ -134,8 +134,8 @@ describe('Initializes with arguments', function() {
     //         fs.mkdirSync(path.resolve('out'));
     //     }
 
-    //     assert(downloader.getOutputPath().indexOf('out') >= 0, 'Output path should have the same directory');
-    //     assert(downloader.getPreset().indexOf(preset) >= 0, 'Preset should be the same');
+    //     assert(downloader.outputPath.indexOf('out') >= 0, 'Output path should have the same directory');
+    //     assert(downloader.preset.indexOf(preset) >= 0, 'Preset should be the same');
         
     //     this.timeout(90000);
     //     return downloader.download().then(result => {
@@ -172,34 +172,133 @@ describe('Initializes with arguments', function() {
     //     });
     // });
 
-    it('--mp3', function() {
+    // it('--mp3', function() {
+    //     const downloader = new YTDownloader({
+    //         url: url,
+    //         output: path.resolve('out'),
+    //         isMp3: true
+    //     });
+
+    //     if(!fs.existsSync(path.resolve('out'))) {
+    //         fs.mkdirSync(path.resolve('out'));
+    //     }
+
+    //     assert(downloader.outputPath.indexOf('out') >= 0, 'Output path should have the same directory');
+    //     assert(downloader.isMp3, 'Flag should be true');
+        
+    //     this.timeout(90000);
+    //     return downloader.download().then(result => {
+    //         assert(result, 'Resuld should not be nulled');
+            
+    //         const outFile = fs.existsSync(path.resolve('out/out.mp3'));
+    //         const aFile = fs.existsSync(path.resolve('out/a.mp4'));
+    //         const vFile = fs.existsSync(path.resolve('out/v.mp4'));
+
+    //         assert(outFile, 'Out file should exist');
+    //         assert(aFile, 'Audio file should exist');
+    //         // assert(vFile, 'Video file should exist');
+
+    //         const ffprobePath = path.resolve('../ffmpeg/bin/ffprobe.exe');
+    //         const outputPath = path.resolve('out/out.mp3');
+    //         const command = `${ffprobePath} -v quiet -print_format json -show_format -show_streams ${outputPath}`;
+            
+    //         exec(command, (err, stdout, stderr) => {
+    //             if(err) {
+    //                 console.log(`Error: ${err}`);
+    //             }
+
+    //             const videoDetails = JSON.parse(stdout);
+
+    //             const audio = videoDetails.streams.filter(filter => filter.codec_type === 'audio')[0];
+    //             const video = videoDetails.streams.filter(filter => filter.codec_type === 'video')[0];
+
+    //             assert(audio.codec_name, 'mp3', 'Codec must be mp3 encoding');
+
+    //             if(aFile && outFile) {
+    //                 fs.rmdirSync(path.resolve('out'), { recursive: true });
+    //             }
+    //         }); 
+    //     });
+    // });
+
+    // it('--ext', function() {
+    //     const downloader = new YTDownloader({
+    //         url: url,
+    //         output: path.resolve('out'),
+    //         preset: 'flashvideo',
+    //         ext: 'flv'
+    //     });
+
+    //     if(!fs.existsSync(path.resolve('out'))) {
+    //         fs.mkdirSync(path.resolve('out'));
+    //     }
+
+    //     assert(downloader.outputPath.indexOf('out') >= 0, 'Output path should have the same directory');
+    //     assert(downloader.ext, 'Extension should be the same');
+        
+    //     this.timeout(90000);
+    //     return downloader.download().then(result => {
+    //         assert(result, 'Resuld should not be nulled');
+            
+    //         const outFile = fs.existsSync(path.resolve('out/out.flv'));
+    //         const aFile = fs.existsSync(path.resolve('out/a.mp4'));
+    //         const vFile = fs.existsSync(path.resolve('out/v.mp4'));
+
+    //         assert(outFile, 'Out file should exist');
+    //         assert(aFile, 'Audio file should exist');
+    //         assert(vFile, 'Video file should exist');
+
+    //         const ffprobePath = path.resolve('../ffmpeg/bin/ffprobe.exe');
+    //         const outputPath = path.resolve('out/out.flv');
+    //         const command = `${ffprobePath} -v quiet -print_format json -show_format -show_streams ${outputPath}`;
+            
+    //         exec(command, (err, stdout, stderr) => {
+    //             if(err) {
+    //                 console.log(`Error: ${err}`);
+    //             }
+
+    //             const videoDetails = JSON.parse(stdout);
+
+    //             const audio = videoDetails.streams.filter(filter => filter.codec_type === 'audio')[0];
+    //             const video = videoDetails.streams.filter(filter => filter.codec_type === 'video')[0];
+
+    //             assert(audio.codec_name, 'h264', 'Codec must be flv encoding');
+
+    //             if(aFile && outFile) {
+    //                 fs.rmdirSync(path.resolve('out'), { recursive: true });
+    //             }
+    //         }); 
+    //     });
+    // });
+
+    it('--quality', function() {
         const downloader = new YTDownloader({
             url: url,
             output: path.resolve('out'),
-            isMp3: true
+            quality: '100p'
         });
 
         if(!fs.existsSync(path.resolve('out'))) {
             fs.mkdirSync(path.resolve('out'));
         }
 
-        assert(downloader.getOutputPath().indexOf('out') >= 0, 'Output path should have the same directory');
-        assert(downloader.isMP3(), 'Flag should be true');
+        assert(downloader.outputPath.indexOf('out') >= 0, 'Output path should have the same directory');
+        assert(downloader.quality, 'Quality should be the same');
         
         this.timeout(90000);
         return downloader.download().then(result => {
-            assert(result, 'Resuld should not be nulled');
+            assert(result, 'Result should not be nulled');
             
-            const outFile = fs.existsSync(path.resolve('out/out.mp3'));
+            const outFile = fs.existsSync(path.resolve('out/out.mp4'));
             const aFile = fs.existsSync(path.resolve('out/a.mp4'));
             const vFile = fs.existsSync(path.resolve('out/v.mp4'));
 
             assert(outFile, 'Out file should exist');
             assert(aFile, 'Audio file should exist');
-            // assert(vFile, 'Video file should exist');
+            assert(vFile, 'Video file should exist');
 
             const ffprobePath = path.resolve('../ffmpeg/bin/ffprobe.exe');
-            const outputPath = path.resolve('out/out.mp3');
+            const outputPath = path.resolve('out/out.mp4');
             const command = `${ffprobePath} -v quiet -print_format json -show_format -show_streams ${outputPath}`;
             
             exec(command, (err, stdout, stderr) => {
@@ -212,7 +311,7 @@ describe('Initializes with arguments', function() {
                 const audio = videoDetails.streams.filter(filter => filter.codec_type === 'audio')[0];
                 const video = videoDetails.streams.filter(filter => filter.codec_type === 'video')[0];
 
-                assert(audio.codec_name, 'mp3', 'Codec must be mp3 encoding');
+                assert(audio.codec_name, 'h264', 'Codec must be flv encoding');
 
                 if(aFile && outFile) {
                     fs.rmdirSync(path.resolve('out'), { recursive: true });
