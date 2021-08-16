@@ -275,7 +275,7 @@ class YoutubeDownloader extends events.EventEmitter {
             choices.push({ title: i.quality, value: i.itag });
         })
 
-        if(self.quality && !qualityList.includes(self.quality)) {
+        if(self.quality && !qualityList.some(e => e.quality === self.quality)) {
             console.log('\n' + chalk.bgRed.bold(`Selected video quality does not exist. "${self.quality}"`));
             const response = await prompts({
                 type: 'select',
@@ -332,7 +332,7 @@ class YoutubeDownloader extends events.EventEmitter {
                 await promise;
             },
             async function() {
-               const stream = ytdl.downloadFromInfo(info, { quality: self.quality ?? 'highestvideo' });
+               const stream = ytdl.downloadFromInfo(info, { quality: self.quality ? self.quality : 'highestvideo' });
                stream.pipe(fs.createWriteStream(path.join(self.outputPath, sanitize('v.mp4'))));
 
                 var percentage = 0;
@@ -368,7 +368,7 @@ class YoutubeDownloader extends events.EventEmitter {
 
                 await promise;
             }
-        ];
+        ];        
 
         if(self.isMp3) {
             tasks.splice(1, 1); // Remove video file when we only want audio clip
@@ -400,7 +400,9 @@ class YoutubeDownloader extends events.EventEmitter {
         const promise = new Promise((resolve) => {
             exec(command, (err, stdout, stderr) => {
                 if(err) {
-                    console.log(`Error: ${err}`);
+                    console.log('\n' + chalk.red.bold(err));
+                    resolve();
+                    return;
                 }
     
                 const videoDetails = JSON.parse(stdout);
@@ -428,7 +430,8 @@ class YoutubeDownloader extends events.EventEmitter {
                         aspectRatio: video.display_aspect_ratio,
                         size: toMB(videoDetails.format.size) + ' MB',
                         duration: videoDetails.format.duration,
-                        bitrate: video.bit_rate
+                        bitrate: video.bit_rate,
+                        fps: video.r_frame_rate
                     };
                 }
 
@@ -492,9 +495,10 @@ class YoutubeDownloader extends events.EventEmitter {
 
         process.outputOptions(...outputOptions);
 
+
         // process.on('start', command => {
-        //     // console.log(command);
-        //     cliprogress.start(100, 0, { filename: title, speed: "N/A" });
+        //     console.log(command);
+        //     // cliprogress.start(100, 0, { filename: title, speed: "N/A" });
         // });
 
         // process.on('codecData', data => {
@@ -504,12 +508,6 @@ class YoutubeDownloader extends events.EventEmitter {
         // process.on('stderr', info => {
         //     console.log(info);
         // });
-
-        process.on('error', (err, stdout, stderr) => {
-            if(err) {
-                console.log(err);
-            }
-        });
 
         var percentage = 0;
         process.on('progress', info => {
@@ -525,6 +523,14 @@ class YoutubeDownloader extends events.EventEmitter {
         process.saveToFile(outputPath);
 
         var promise = new Promise((resolve) => {
+            process.on('error', (err, stdout, stderr) => {
+                if(err) {
+                    console.log('\n\n' + chalk.red.bold(err));
+                    self.cliprogress.stop();
+                    resolve();
+                }
+            });
+            
             process.on('end', (stdout, stderr) => {
                 self.totalPercentage += percentage;
                 self.cliprogress.update(Math.round(self.totalPercentage), {
