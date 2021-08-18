@@ -1,6 +1,120 @@
-/* body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
   margin: auto;
-  max-width: 38rem;
-  padding: 2rem;
-} */
+}
+
+nav,
+.card-title,
+.dropdown-content > li {
+  background-color: transparent;
+  -webkit-box-shadow: none;
+  box-shadow: none;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.14);
+}
+
+.wrapper {
+  min-height: 100vh;
+}
+
+.navigation {
+  width: 100%;
+  height: 80px;
+  line-height: 80px;
+}
+
+.container {
+  flex-grow: 1;
+}
+
+.card-content,
+.input-field > label {
+  left: 0.75rem;
+}
+
+.card,
+.card-content {
+  overflow-y: hidden;
+}
+
+.card > .card-image {
+  min-height: 280px;
+}
+
+.card-title {
+  width: 850px;
+  font-weight: 500 !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-desc {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.nav-title {
+  color: #000;
+}
+
+.card-image > img {
+  height: 100%;
+  object-fit: cover;
+  width: 400px !important;
+}
+
+.card-content {
+  max-height: 500px;
+}
+
+.card-loader,
+.card-fail {
+  min-height: 570px;
+  align-items: center;
+  justify-content: center;
+}
+
+.dropdown-content > li {
+  min-height: 35px;
+}
+
+.dropdown-content > li > a {
+  line-height: 22px;
+}
+
+.hide {
+  display: none !important;
+}
+
+footer {
+  height: 40px;
+}
+
+footer > p {
+  font-size: small;
+}
+
+::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+}
+
+@media (max-width: 800px) {
+  .card-image > img {
+    width: 200px !important;
+  }
+
+  .card-content {
+    max-height: 200px;
+  }
+
+  .card-loader,
+  .card-fail {
+    min-height: 280px;
+  }
+
+  .card-title {
+    width: 440px;
+  }
+}
