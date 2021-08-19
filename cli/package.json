@@ -1,5 +1,5 @@
 {
-  "name": "youtube-downloader",
+  "name": "youtube-downloader-cli",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -24,6 +24,7 @@
     "ytdl-core": "^4.9.1"
   },
   "devDependencies": {
+    "lodash": "^4.17.21",
     "mocha": "^9.0.3"
   }
 }
