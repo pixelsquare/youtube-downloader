@@ -1,6 +1,6 @@
 'use strict'
 
-const downloader = require('./js/downloader.js');
+const downloader = require('./../../lib/index.js');
 window.$ = window.jQuery = require('jquery');
 
 const setCardInfo = (info) => {
@@ -46,13 +46,12 @@ window.addEventListener('DOMContentLoaded', e => {
         alignment: 'right'
      });
 
-     downloader.getUrlInfo('https://www.youtube.com/watch?v=LXb3EKWsInQ').then(result => {
-        console.log(result);
+     downloader.getURLInfo('https://www.youtube.com/watch?v=LXb3EKWsInQ').then(result => {
         setCardInfo({
             title: result.videoDetails.title,
             description: result.videoDetails.description,
             thumbnail: result.videoDetails.thumbnails[result.videoDetails.thumbnails.length - 1].url,
-            qualityList: downloader.getVideoQuality(result.formats)
+            qualityList: downloader.getAvailableQuality(result)
         })
      });
 

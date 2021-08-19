@@ -2,7 +2,7 @@
 
 const getUsage = require('command-line-usage');
 const commandLineArgs = require('command-line-args');
-const YTDownloader = require('./YoutubeDownloader');
+const YTDownloader = require('./YoutubeDownloader.js');
 
 const optionDefinitions = [
   {
@@ -78,18 +78,20 @@ if(options.url) {
     var opts = {
         title: options.title,
         url: options.url,
-        output: options.output ,
+        outputPath: options.output,
         quality: options.quality,
         ext: options.ext,
         preset: options.preset,
-        itag: options.itag,
         isMp3: options.mp3,
-        force: options.force
     };
 
     const downloader = new YTDownloader(opts);
-    downloader.download().then(result => {
+    downloader.download()
+    .then(result => {
         console.log(result);
+    })
+    .catch(err => {
+      console.log(err);
     });
 }
 
