@@ -68,6 +68,27 @@ nav,
   max-height: 500px;
 }
 
+#action-loader {
+  display: flex;
+  flex: 1 0 auto;
+}
+
+#action-result > div {
+  display: inline-block;
+  height: 90px;
+  line-height: 90px;
+}
+
+.percentage,
+.action-button {
+  height: 90px;
+  line-height: 90px;
+}
+
+.error-msg {
+  width: 100%;
+}
+
 .card-loader,
 .card-fail {
   min-height: 570px;
