@@ -28,9 +28,7 @@ const createWindow = () => {
   // Open the DevTools.
   mainWindow.webContents.openDevTools({ mode: 'detach' });
 
-  if(isDev) {
-    Menu.setApplicationMenu(null);
-  }
+  Menu.setApplicationMenu(null);
 };
 
 // This method will be called when Electron has finished
