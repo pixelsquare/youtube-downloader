@@ -1,16 +1,20 @@
 'use strict'
 
-const fs = require('fs');
-const path = require('path');
+// const fs = require('fs');
+// const path = require('path');
+
+const fs = window.require('fs');
+const path = window.require('path');
 
 const async = require('async');
 const ffmpeg = require('fluent-ffmpeg');
 const speedometer = require('speedometer');
 const sanitize = require('sanitize-filename');
 
-const downloader = require('./../../lib/index');
+const downloader = require('./../../../lib/index.js');
 window.$ = window.jQuery = require('jquery');
 
+const isDevelopment = false;
 
 const setCardInfo = (info) => {
     const titleElement = document.querySelector('#vid-title');
@@ -41,6 +45,7 @@ const setCardInfo = (info) => {
                 setActionPanelActive(false);
                 setActionResultActive(true);
             
+                console.log(err);
                 setActionResult(`Failed: ${err.message}`, () => {
                     setActionPanelActive(true);
                     setActionLoaderActive(false);
@@ -83,6 +88,10 @@ const download = async (info, itag, outPath) => {
     metadata.artist = info.videoDetails.media.artist;
     metadata.author = info.videoDetails.author.name;
     metadata.description = info.videoDetails.description;
+
+    if(!fs.existsSync(outPath)) {
+        fs.mkdirSync(outPath);
+    }
 
     const tasks = [
         async function() {
@@ -129,46 +138,47 @@ const download = async (info, itag, outPath) => {
             await promise;
         },
         async function() {
-           const stream = await downloader.download(info, { quality: itag ? itag : 'highestvideo' });
-           stream.pipe(fs.createWriteStream(path.join(outPath, sanitize('v.mp4'))));
+            console.log(itag);
+            const stream = await downloader.download(info, { quality: itag ? itag : 'highestvideo' });
+            stream.pipe(fs.createWriteStream(path.join(outPath, sanitize('v.mp4'))));
 
-            var percentage = 0;
-            stream.on('progress', (chunkSize, downloaded, total) => {
-                downloadData.totalDownloaded += parseInt(chunkSize);
-                downloadData.delta += parseInt(chunkSize);
+                var percentage = 0;
+                stream.on('progress', (chunkSize, downloaded, total) => {
+                    downloadData.totalDownloaded += parseInt(chunkSize);
+                    downloadData.delta += parseInt(chunkSize);
 
-                percentage = (downloaded / total) * 100;
-                setProgressBarUpdate((totalPercentage + percentage) / maxPercentage);
-                // console.log((totalPercentage + percentage) + ' ' + maxPercentage + ' ' + ((totalPercentage + percentage) / maxPercentage));
+                    percentage = (downloaded / total) * 100;
+                    setProgressBarUpdate((totalPercentage + percentage) / maxPercentage);
+                    // console.log((totalPercentage + percentage) + ' ' + maxPercentage + ' ' + ((totalPercentage + percentage) / maxPercentage));
 
-                if(Date.now() >= nextUpdate) {
-                    downloadData.eta = Math.round(total - downloaded) / downloadData.speed(chunkSize);
+                    if(Date.now() >= nextUpdate) {
+                        downloadData.eta = Math.round(total - downloaded) / downloadData.speed(chunkSize);
 
-                    downloadData.delta = 0;
-                    nextUpdate = Date.now() + time;
-                }
-            });
-
-            stream.on('data', data => {});
-
-            stream.on('error', err => {
-                const error = {
-                    message: 'An error occured while downloading the video file.',
-                    error: err,
-                    payload: ''
-                }
-
-                return Promise.reject(error);
-            });
-
-            const promise = new Promise((resolve) => {
-                stream.on('end', () => {
-                    totalPercentage += percentage;
-                    resolve();
+                        downloadData.delta = 0;
+                        nextUpdate = Date.now() + time;
+                    }
                 });
-            });
 
-            await promise;
+                stream.on('data', data => {});
+
+                stream.on('error', err => {
+                    const error = {
+                        message: 'An error occured while downloading the video file.',
+                        error: err,
+                        payload: ''
+                    }
+
+                    return Promise.reject(error);
+                });
+
+                const promise = new Promise((resolve) => {
+                    stream.on('end', () => {
+                        totalPercentage += percentage;
+                        resolve();
+                    });
+                });
+
+                await promise;
         }
     ];
 
@@ -204,9 +214,9 @@ const download = async (info, itag, outPath) => {
 }
 
 const mergeMediaFiles = async (title, outPath, metadata) => {
-    const presetsPath = path.resolve('presets');
-    const ffmpegPath = path.resolve('../ffmpeg/bin/ffmpeg.exe');
-    const ffmpegProbePath = path.resolve('../ffmpeg/bin/ffprobe.exe');
+    const presetsPath = isDevelopment ? path.resolve('presets') : path.resolve('resources/app/presets');
+    const ffmpegPath = isDevelopment ? path.resolve('../ffmpeg/bin/ffmpeg.exe') : path.resolve('resources/app/ffmpeg/bin/ffmpeg.exe');
+    const ffmpegProbePath = isDevelopment ? path.resolve('../ffmpeg/bin/ffprobe.exe') : path.resolve('resources/app/ffmpeg/bin/ffprobe.exe');
 
     ffmpeg.setFfmpegPath(ffmpegPath);
     ffmpeg.setFfprobePath(ffmpegProbePath);
@@ -214,6 +224,9 @@ const mergeMediaFiles = async (title, outPath, metadata) => {
     const videoPath = path.join(outPath, 'v.mp4');
     const audioPath = path.join(outPath, 'a.mp4');
     const outputPath = path.join(outPath, sanitize(title + '.mp4'));
+
+    console.log(videoPath);
+    console.log(audioPath);
 
     var eta = 0;
     var speed = speedometer(5000);
@@ -225,7 +238,7 @@ const mergeMediaFiles = async (title, outPath, metadata) => {
 
     process.addInput(videoPath);
     process.addInput(audioPath);
-    // process.preset(self.options.preset);
+    process.preset('mid-res');
 
     const outputOptions = [
         '-id3v2_version', '4',

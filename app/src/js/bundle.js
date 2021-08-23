@@ -1,5062 +1,4 @@
 (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
-'use strict'
-
-const ytdl = require('ytdl-core');
-
-module.exports = {
-    getURLInfo: async (url) => {
-        var info = null;
-
-        if(url && ytdl.validateURL(url)) {
-            try {
-                info = await ytdl.getInfo(url);
-            }
-            catch(err) {
-                const error = {
-                    function: 'getURLInfo', 
-                    message: 'Unable to get info from URL', 
-                    payload: err.message
-                };
-                
-                return Promise.reject(error);
-            }
-        }
-
-        return info;
-    },
-    getURLBasicInfo: async (url) => {
-        var info = null;
-
-        if(url && ytdl.validateURL(url)) {
-            try {
-                info = await ytdl.getBasicInfo(url);
-            }
-            catch(err) {
-                const error = {
-                    function: 'getURLBasicInfo', 
-                    message: 'Unable to get info from URL', 
-                    payload: err.message
-                };
-                
-                return Promise.reject(error);
-            }
-        }
-
-        return info; 
-    },
-    getVideoDetails: async (url) => {
-        var info = null;
-
-        if(url && ytdl.validateURL(url)) {
-            try {
-                info = await ytdl.getInfo(url);
-                return info = info.videoDetails;
-            }
-            catch(err) {
-                const error = {
-                    function: 'getURLInfoAsync', 
-                    message: 'Unable to get info from URL', 
-                    payload: err.message
-                };
-
-                return Promise.reject(error);
-            }
-        }
-
-        return info;
-    },
-    getAvailableQuality: (info) => {
-        var qualityList = [];
-        info.formats.forEach(i => {
-            if(i.qualityLabel && !qualityList.includes(i.qualityLabel)) {
-                qualityList.push({
-                    itag: i.itag,
-                    quality: i.qualityLabel,
-                    container: i.container
-                });
-            }
-        });
-
-        qualityList.sort((a, b) => parseInt(b.itag) - parseInt(a.itag));
-
-        var result = [];
-        qualityList.forEach(i => {
-            if(!result.some(e => e.quality === i.quality)) {
-                result.push(i);
-            }
-        });
-        
-        result.sort((a, b) => parseInt(b.quality) - parseInt(a.quality));
-
-        return result;
-    },
-    download: async (info, options) => {
-        var stream = null;
-
-        if(info) {
-            try {
-                stream = await ytdl.downloadFromInfo(info, options);
-            }
-            catch(err) {
-                const error = {
-                    function: 'download', 
-                    message: 'Unable to get info from URL', 
-                    payload: err.message
-                };
-
-                return Promise.reject(error);
-            }
-        }
-
-        return stream;
-    }
-};
-},{"ytdl-core":12}],2:[function(require,module,exports){
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-const stream_1 = require("stream");
-const sax_1 = __importDefault(require("sax"));
-const parse_time_1 = require("./parse-time");
-/**
- * A wrapper around sax that emits segments.
- */
-class DashMPDParser extends stream_1.Writable {
-    constructor(targetID) {
-        super();
-        this._parser = sax_1.default.createStream(false, { lowercase: true });
-        this._parser.on('error', this.destroy.bind(this));
-        let lastTag;
-        let currtime = 0;
-        let seq = 0;
-        let segmentTemplate;
-        let timescale, offset, duration, baseURL;
-        let timeline = [];
-        let getSegments = false;
-        let gotSegments = false;
-        let isStatic;
-        let treeLevel;
-        let periodStart;
-        const tmpl = (str) => {
-            const context = {
-                RepresentationID: targetID,
-                Number: seq,
-                Time: currtime,
-            };
-            return str.replace(/\$(\w+)\$/g, (m, p1) => `${context[p1]}`);
-        };
-        this._parser.on('opentag', node => {
-            switch (node.name) {
-                case 'mpd':
-                    currtime =
-                        node.attributes.availabilitystarttime ?
-                            new Date(node.attributes.availabilitystarttime).getTime() : 0;
-                    isStatic = node.attributes.type !== 'dynamic';
-                    break;
-                case 'period':
-                    // Reset everything on <Period> tag.
-                    seq = 0;
-                    timescale = 1000;
-                    duration = 0;
-                    offset = 0;
-                    baseURL = [];
-                    treeLevel = 0;
-                    periodStart = parse_time_1.durationStr(node.attributes.start) || 0;
-                    break;
-                case 'segmentlist':
-                    seq = parseInt(node.attributes.startnumber) || seq;
-                    timescale = parseInt(node.attributes.timescale) || timescale;
-                    duration = parseInt(node.attributes.duration) || duration;
-                    offset = parseInt(node.attributes.presentationtimeoffset) || offset;
-                    break;
-                case 'segmenttemplate':
-                    segmentTemplate = node.attributes;
-                    seq = parseInt(node.attributes.startnumber) || seq;
-                    timescale = parseInt(node.attributes.timescale) || timescale;
-                    break;
-                case 'segmenttimeline':
-                case 'baseurl':
-                    lastTag = node.name;
-                    break;
-                case 's':
-                    timeline.push({
-                        duration: parseInt(node.attributes.d),
-                        repeat: parseInt(node.attributes.r),
-                        time: parseInt(node.attributes.t),
-                    });
-                    break;
-                case 'adaptationset':
-                case 'representation':
-                    treeLevel++;
-                    if (!targetID) {
-                        targetID = node.attributes.id;
-                    }
-                    getSegments = node.attributes.id === `${targetID}`;
-                    if (getSegments) {
-                        if (periodStart) {
-                            currtime += periodStart;
-                        }
-                        if (offset) {
-                            currtime -= offset / timescale * 1000;
-                        }
-                        this.emit('starttime', currtime);
-                    }
-                    break;
-                case 'initialization':
-                    if (getSegments) {
-                        this.emit('item', {
-                            url: baseURL.filter(s => !!s).join('') + node.attributes.sourceurl,
-                            seq: seq,
-                            init: true,
-                            duration: 0,
-                        });
-                    }
-                    break;
-                case 'segmenturl':
-                    if (getSegments) {
-                        gotSegments = true;
-                        let tl = timeline.shift();
-                        let segmentDuration = ((tl === null || tl === void 0 ? void 0 : tl.duration) || duration) / timescale * 1000;
-                        this.emit('item', {
-                            url: baseURL.filter(s => !!s).join('') + node.attributes.media,
-                            seq: seq++,
-                            duration: segmentDuration,
-                        });
-                        currtime += segmentDuration;
-                    }
-                    break;
-            }
-        });
-        const onEnd = () => {
-            if (isStatic) {
-                this.emit('endlist');
-            }
-            if (!getSegments) {
-                this.destroy(Error(`Representation '${targetID}' not found`));
-            }
-            else {
-                this.emit('end');
-            }
-        };
-        this._parser.on('closetag', tagName => {
-            switch (tagName) {
-                case 'adaptationset':
-                case 'representation':
-                    treeLevel--;
-                    if (segmentTemplate && timeline.length) {
-                        gotSegments = true;
-                        if (segmentTemplate.initialization) {
-                            this.emit('item', {
-                                url: baseURL.filter(s => !!s).join('') +
-                                    tmpl(segmentTemplate.initialization),
-                                seq: seq,
-                                init: true,
-                                duration: 0,
-                            });
-                        }
-                        for (let { duration: itemDuration, repeat, time } of timeline) {
-                            itemDuration = itemDuration / timescale * 1000;
-                            repeat = repeat || 1;
-                            currtime = time || currtime;
-                            for (let i = 0; i < repeat; i++) {
-                                this.emit('item', {
-                                    url: baseURL.filter(s => !!s).join('') +
-                                        tmpl(segmentTemplate.media),
-                                    seq: seq++,
-                                    duration: itemDuration,
-                                });
-                                currtime += itemDuration;
-                            }
-                        }
-                    }
-                    if (gotSegments) {
-                        this.emit('endearly');
-                        onEnd();
-                        this._parser.removeAllListeners();
-                        this.removeAllListeners('finish');
-                    }
-                    break;
-            }
-        });
-        this._parser.on('text', text => {
-            if (lastTag === 'baseurl') {
-                baseURL[treeLevel] = text;
-                lastTag = null;
-            }
-        });
-        this.on('finish', onEnd);
-    }
-    _write(chunk, encoding, callback) {
-        this._parser.write(chunk, encoding);
-        callback();
-    }
-}
-exports.default = DashMPDParser;
-
-},{"./parse-time":5,"sax":8,"stream":72}],3:[function(require,module,exports){
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-const stream_1 = require("stream");
-const miniget_1 = __importDefault(require("miniget"));
-const m3u8_parser_1 = __importDefault(require("./m3u8-parser"));
-const dash_mpd_parser_1 = __importDefault(require("./dash-mpd-parser"));
-const queue_1 = require("./queue");
-const parse_time_1 = require("./parse-time");
-const supportedParsers = {
-    m3u8: m3u8_parser_1.default,
-    'dash-mpd': dash_mpd_parser_1.default,
-};
-let m3u8stream = ((playlistURL, options = {}) => {
-    const stream = new stream_1.PassThrough();
-    const chunkReadahead = options.chunkReadahead || 3;
-    // 20 seconds.
-    const liveBuffer = options.liveBuffer || 20000;
-    const requestOptions = options.requestOptions;
-    const Parser = supportedParsers[options.parser || (/\.mpd$/.test(playlistURL) ? 'dash-mpd' : 'm3u8')];
-    if (!Parser) {
-        throw TypeError(`parser '${options.parser}' not supported`);
-    }
-    let begin = 0;
-    if (typeof options.begin !== 'undefined') {
-        begin = typeof options.begin === 'string' ?
-            parse_time_1.humanStr(options.begin) :
-            Math.max(options.begin - liveBuffer, 0);
-    }
-    const forwardEvents = (req) => {
-        for (let event of ['abort', 'request', 'response', 'redirect', 'retry', 'reconnect']) {
-            req.on(event, stream.emit.bind(stream, event));
-        }
-    };
-    let currSegment;
-    const streamQueue = new queue_1.Queue((req, callback) => {
-        currSegment = req;
-        // Count the size manually, since the `content-length` header is not
-        // always there.
-        let size = 0;
-        req.on('data', (chunk) => size += chunk.length);
-        req.pipe(stream, { end: false });
-        req.on('end', () => callback(null, size));
-    }, { concurrency: 1 });
-    let segmentNumber = 0;
-    let downloaded = 0;
-    const requestQueue = new queue_1.Queue((segment, callback) => {
-        let reqOptions = Object.assign({}, requestOptions);
-        if (segment.range) {
-            reqOptions.headers = Object.assign({}, reqOptions.headers, {
-                Range: `bytes=${segment.range.start}-${segment.range.end}`,
-            });
-        }
-        let req = miniget_1.default(new URL(segment.url, playlistURL).toString(), reqOptions);
-        req.on('error', callback);
-        forwardEvents(req);
-        streamQueue.push(req, (_, size) => {
-            downloaded += +size;
-            stream.emit('progress', {
-                num: ++segmentNumber,
-                size: size,
-                duration: segment.duration,
-                url: segment.url,
-            }, requestQueue.total, downloaded);
-            callback(null);
-        });
-    }, { concurrency: chunkReadahead });
-    const onError = (err) => {
-        if (ended) {
-            return;
-        }
-        stream.emit('error', err);
-        // Stop on any error.
-        stream.end();
-    };
-    // When to look for items again.
-    let refreshThreshold;
-    let minRefreshTime;
-    let refreshTimeout;
-    let fetchingPlaylist = true;
-    let ended = false;
-    let isStatic = false;
-    let lastRefresh;
-    const onQueuedEnd = (err) => {
-        currSegment = null;
-        if (err) {
-            onError(err);
-        }
-        else if (!fetchingPlaylist && !ended && !isStatic &&
-            requestQueue.tasks.length + requestQueue.active <= refreshThreshold) {
-            let ms = Math.max(0, minRefreshTime - (Date.now() - lastRefresh));
-            fetchingPlaylist = true;
-            refreshTimeout = setTimeout(refreshPlaylist, ms);
-        }
-        else if ((ended || isStatic) &&
-            !requestQueue.tasks.length && !requestQueue.active) {
-            stream.end();
-        }
-    };
-    let currPlaylist;
-    let lastSeq;
-    let starttime = 0;
-    const refreshPlaylist = () => {
-        lastRefresh = Date.now();
-        currPlaylist = miniget_1.default(playlistURL, requestOptions);
-        currPlaylist.on('error', onError);
-        forwardEvents(currPlaylist);
-        const parser = currPlaylist.pipe(new Parser(options.id));
-        parser.on('starttime', (a) => {
-            if (starttime) {
-                return;
-            }
-            starttime = a;
-            if (typeof options.begin === 'string' && begin >= 0) {
-                begin += starttime;
-            }
-        });
-        parser.on('endlist', () => { isStatic = true; });
-        parser.on('endearly', currPlaylist.unpipe.bind(currPlaylist, parser));
-        let addedItems = [];
-        const addItem = (item) => {
-            if (!item.init) {
-                if (item.seq <= lastSeq) {
-                    return;
-                }
-                lastSeq = item.seq;
-            }
-            begin = item.time;
-            requestQueue.push(item, onQueuedEnd);
-            addedItems.push(item);
-        };
-        let tailedItems = [], tailedItemsDuration = 0;
-        parser.on('item', (item) => {
-            let timedItem = Object.assign({ time: starttime }, item);
-            if (begin <= timedItem.time) {
-                addItem(timedItem);
-            }
-            else {
-                tailedItems.push(timedItem);
-                tailedItemsDuration += timedItem.duration;
-                // Only keep the last `liveBuffer` of items.
-                while (tailedItems.length > 1 &&
-                    tailedItemsDuration - tailedItems[0].duration > liveBuffer) {
-                    const lastItem = tailedItems.shift();
-                    tailedItemsDuration -= lastItem.duration;
-                }
-            }
-            starttime += timedItem.duration;
-        });
-        parser.on('end', () => {
-            currPlaylist = null;
-            // If we are too ahead of the stream, make sure to get the
-            // latest available items with a small buffer.
-            if (!addedItems.length && tailedItems.length) {
-                tailedItems.forEach(item => { addItem(item); });
-            }
-            // Refresh the playlist when remaining segments get low.
-            refreshThreshold = Math.max(1, Math.ceil(addedItems.length * 0.01));
-            // Throttle refreshing the playlist by looking at the duration
-            // of live items added on this refresh.
-            minRefreshTime =
-                addedItems.reduce((total, item) => item.duration + total, 0);
-            fetchingPlaylist = false;
-            onQueuedEnd(null);
-        });
-    };
-    refreshPlaylist();
-    stream.end = () => {
-        ended = true;
-        streamQueue.die();
-        requestQueue.die();
-        clearTimeout(refreshTimeout);
-        currPlaylist === null || currPlaylist === void 0 ? void 0 : currPlaylist.destroy();
-        currSegment === null || currSegment === void 0 ? void 0 : currSegment.destroy();
-        stream_1.PassThrough.prototype.end.call(stream, null);
-    };
-    return stream;
-});
-m3u8stream.parseTimestamp = parse_time_1.humanStr;
-module.exports = m3u8stream;
-
-},{"./dash-mpd-parser":2,"./m3u8-parser":4,"./parse-time":5,"./queue":6,"miniget":7,"stream":72}],4:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-const stream_1 = require("stream");
-/**
- * A very simple m3u8 playlist file parser that detects tags and segments.
- */
-class m3u8Parser extends stream_1.Writable {
-    constructor() {
-        super();
-        this._lastLine = '';
-        this._seq = 0;
-        this._nextItemDuration = null;
-        this._nextItemRange = null;
-        this._lastItemRangeEnd = 0;
-        this.on('finish', () => {
-            this._parseLine(this._lastLine);
-            this.emit('end');
-        });
-    }
-    _parseAttrList(value) {
-        let attrs = {};
-        let regex = /([A-Z0-9-]+)=(?:"([^"]*?)"|([^,]*?))/g;
-        let match;
-        while ((match = regex.exec(value)) !== null) {
-            attrs[match[1]] = match[2] || match[3];
-        }
-        return attrs;
-    }
-    _parseRange(value) {
-        if (!value)
-            return null;
-        let svalue = value.split('@');
-        let start = svalue[1] ? parseInt(svalue[1]) : this._lastItemRangeEnd + 1;
-        let end = start + parseInt(svalue[0]) - 1;
-        let range = { start, end };
-        this._lastItemRangeEnd = range.end;
-        return range;
-    }
-    _parseLine(line) {
-        let match = line.match(/^#(EXT[A-Z0-9-]+)(?::(.*))?/);
-        if (match) {
-            // This is a tag.
-            const tag = match[1];
-            const value = match[2] || '';
-            switch (tag) {
-                case 'EXT-X-PROGRAM-DATE-TIME':
-                    this.emit('starttime', new Date(value).getTime());
-                    break;
-                case 'EXT-X-MEDIA-SEQUENCE':
-                    this._seq = parseInt(value);
-                    break;
-                case 'EXT-X-MAP': {
-                    let attrs = this._parseAttrList(value);
-                    if (!attrs.URI) {
-                        this.destroy(new Error('`EXT-X-MAP` found without required attribute `URI`'));
-                        return;
-                    }
-                    this.emit('item', {
-                        url: attrs.URI,
-                        seq: this._seq,
-                        init: true,
-                        duration: 0,
-                        range: this._parseRange(attrs.BYTERANGE),
-                    });
-                    break;
-                }
-                case 'EXT-X-BYTERANGE': {
-                    this._nextItemRange = this._parseRange(value);
-                    break;
-                }
-                case 'EXTINF':
-                    this._nextItemDuration =
-                        Math.round(parseFloat(value.split(',')[0]) * 1000);
-                    break;
-                case 'EXT-X-ENDLIST':
-                    this.emit('endlist');
-                    break;
-            }
-        }
-        else if (!/^#/.test(line) && line.trim()) {
-            // This is a segment
-            this.emit('item', {
-                url: line.trim(),
-                seq: this._seq++,
-                duration: this._nextItemDuration,
-                range: this._nextItemRange,
-            });
-            this._nextItemRange = null;
-        }
-    }
-    _write(chunk, encoding, callback) {
-        let lines = chunk.toString('utf8').split('\n');
-        if (this._lastLine) {
-            lines[0] = this._lastLine + lines[0];
-        }
-        lines.forEach((line, i) => {
-            if (this.destroyed)
-                return;
-            if (i < lines.length - 1) {
-                this._parseLine(line);
-            }
-            else {
-                // Save the last line in case it has been broken up.
-                this._lastLine = line;
-            }
-        });
-        callback();
-    }
-}
-exports.default = m3u8Parser;
-
-},{"stream":72}],5:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.durationStr = exports.humanStr = void 0;
-const numberFormat = /^\d+$/;
-const timeFormat = /^(?:(?:(\d+):)?(\d{1,2}):)?(\d{1,2})(?:\.(\d{3}))?$/;
-const timeUnits = {
-    ms: 1,
-    s: 1000,
-    m: 60000,
-    h: 3600000,
-};
-/**
- * Converts human friendly time to milliseconds. Supports the format
- * 00:00:00.000 for hours, minutes, seconds, and milliseconds respectively.
- * And 0ms, 0s, 0m, 0h, and together 1m1s.
- *
- * @param {number|string} time
- * @returns {number}
- */
-exports.humanStr = (time) => {
-    if (typeof time === 'number') {
-        return time;
-    }
-    if (numberFormat.test(time)) {
-        return +time;
-    }
-    const firstFormat = timeFormat.exec(time);
-    if (firstFormat) {
-        return (+(firstFormat[1] || 0) * timeUnits.h) +
-            (+(firstFormat[2] || 0) * timeUnits.m) +
-            (+firstFormat[3] * timeUnits.s) +
-            +(firstFormat[4] || 0);
-    }
-    else {
-        let total = 0;
-        const r = /(-?\d+)(ms|s|m|h)/g;
-        let rs;
-        while ((rs = r.exec(time)) !== null) {
-            total += +rs[1] * timeUnits[rs[2]];
-        }
-        return total;
-    }
-};
-/**
- * Parses a duration string in the form of "123.456S", returns milliseconds.
- *
- * @param {string} time
- * @returns {number}
- */
-exports.durationStr = (time) => {
-    let total = 0;
-    const r = /(\d+(?:\.\d+)?)(S|M|H)/g;
-    let rs;
-    while ((rs = r.exec(time)) !== null) {
-        total += +rs[1] * timeUnits[rs[2].toLowerCase()];
-    }
-    return total;
-};
-
-},{}],6:[function(require,module,exports){
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.Queue = void 0;
-class Queue {
-    /**
-     * A really simple queue with concurrency.
-     *
-     * @param {Function} worker
-     * @param {Object} options
-     * @param {!number} options.concurrency
-     */
-    constructor(worker, options = {}) {
-        this._worker = worker;
-        this._concurrency = options.concurrency || 1;
-        this.tasks = [];
-        this.total = 0;
-        this.active = 0;
-    }
-    /**
-     * Push a task to the queue.
-     *
-     *  @param {T} item
-     *  @param {!Function} callback
-     */
-    push(item, callback) {
-        this.tasks.push({ item, callback });
-        this.total++;
-        this._next();
-    }
-    /**
-     * Process next job in queue.
-     */
-    _next() {
-        if (this.active >= this._concurrency || !this.tasks.length) {
-            return;
-        }
-        const { item, callback } = this.tasks.shift();
-        let callbackCalled = false;
-        this.active++;
-        this._worker(item, (err, result) => {
-            if (callbackCalled) {
-                return;
-            }
-            this.active--;
-            callbackCalled = true;
-            callback === null || callback === void 0 ? void 0 : callback(err, result);
-            this._next();
-        });
-    }
-    /**
-     * Stops processing queued jobs.
-     */
-    die() {
-        this.tasks = [];
-    }
-}
-exports.Queue = Queue;
-
-},{}],7:[function(require,module,exports){
-(function (process){(function (){
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-const http_1 = __importDefault(require("http"));
-const https_1 = __importDefault(require("https"));
-const stream_1 = require("stream");
-const httpLibs = { 'http:': http_1.default, 'https:': https_1.default };
-const redirectStatusCodes = new Set([301, 302, 303, 307, 308]);
-const retryStatusCodes = new Set([429, 503]);
-// `request`, `response`, `abort`, left out, miniget will emit these.
-const requestEvents = ['connect', 'continue', 'information', 'socket', 'timeout', 'upgrade'];
-const responseEvents = ['aborted'];
-Miniget.MinigetError = class MinigetError extends Error {
-    constructor(message, statusCode) {
-        super(message);
-        this.statusCode = statusCode;
-    }
-};
-Miniget.defaultOptions = {
-    maxRedirects: 10,
-    maxRetries: 2,
-    maxReconnects: 0,
-    backoff: { inc: 100, max: 10000 },
-};
-function Miniget(url, options = {}) {
-    var _a;
-    const opts = Object.assign({}, Miniget.defaultOptions, options);
-    const stream = new stream_1.PassThrough({ highWaterMark: opts.highWaterMark });
-    stream.destroyed = stream.aborted = false;
-    let activeRequest;
-    let activeResponse;
-    let activeDecodedStream;
-    let redirects = 0;
-    let retries = 0;
-    let retryTimeout;
-    let reconnects = 0;
-    let contentLength;
-    let acceptRanges = false;
-    let rangeStart = 0, rangeEnd;
-    let downloaded = 0;
-    // Check if this is a ranged request.
-    if ((_a = opts.headers) === null || _a === void 0 ? void 0 : _a.Range) {
-        let r = /bytes=(\d+)-(\d+)?/.exec(`${opts.headers.Range}`);
-        if (r) {
-            rangeStart = parseInt(r[1], 10);
-            rangeEnd = parseInt(r[2], 10);
-        }
-    }
-    // Add `Accept-Encoding` header.
-    if (opts.acceptEncoding) {
-        opts.headers = Object.assign({
-            'Accept-Encoding': Object.keys(opts.acceptEncoding).join(', '),
-        }, opts.headers);
-    }
-    const downloadHasStarted = () => activeDecodedStream && downloaded > 0;
-    const downloadComplete = () => !acceptRanges || downloaded === contentLength;
-    const reconnect = (err) => {
-        activeDecodedStream = null;
-        retries = 0;
-        let inc = opts.backoff.inc;
-        let ms = Math.min(inc, opts.backoff.max);
-        retryTimeout = setTimeout(doDownload, ms);
-        stream.emit('reconnect', reconnects, err);
-    };
-    const reconnectIfEndedEarly = (err) => {
-        if (options.method !== 'HEAD' && !downloadComplete() && reconnects++ < opts.maxReconnects) {
-            reconnect(err);
-            return true;
-        }
-        return false;
-    };
-    const retryRequest = (retryOptions) => {
-        if (stream.destroyed) {
-            return false;
-        }
-        if (downloadHasStarted()) {
-            return reconnectIfEndedEarly(retryOptions.err);
-        }
-        else if ((!retryOptions.err || retryOptions.err.message === 'ENOTFOUND') &&
-            retries++ < opts.maxRetries) {
-            let ms = retryOptions.retryAfter ||
-                Math.min(retries * opts.backoff.inc, opts.backoff.max);
-            retryTimeout = setTimeout(doDownload, ms);
-            stream.emit('retry', retries, retryOptions.err);
-            return true;
-        }
-        return false;
-    };
-    const forwardEvents = (ee, events) => {
-        for (let event of events) {
-            ee.on(event, stream.emit.bind(stream, event));
-        }
-    };
-    const doDownload = () => {
-        let parsed = {}, httpLib;
-        try {
-            let urlObj = typeof url === 'string' ? new URL(url) : url;
-            parsed = Object.assign({}, {
-                host: urlObj.host,
-                hostname: urlObj.hostname,
-                path: urlObj.pathname + urlObj.search + urlObj.hash,
-                port: urlObj.port,
-                protocol: urlObj.protocol,
-            });
-            if (urlObj.username) {
-                parsed.auth = `${urlObj.username}:${urlObj.password}`;
-            }
-            httpLib = httpLibs[String(parsed.protocol)];
-        }
-        catch (err) {
-            // Let the error be caught by the if statement below.
-        }
-        if (!httpLib) {
-            stream.emit('error', new Miniget.MinigetError(`Invalid URL: ${url}`));
-            return;
-        }
-        Object.assign(parsed, opts);
-        if (acceptRanges && downloaded > 0) {
-            let start = downloaded + rangeStart;
-            let end = rangeEnd || '';
-            parsed.headers = Object.assign({}, parsed.headers, {
-                Range: `bytes=${start}-${end}`,
-            });
-        }
-        if (opts.transform) {
-            try {
-                parsed = opts.transform(parsed);
-            }
-            catch (err) {
-                stream.emit('error', err);
-                return;
-            }
-            if (!parsed || parsed.protocol) {
-                httpLib = httpLibs[String(parsed === null || parsed === void 0 ? void 0 : parsed.protocol)];
-                if (!httpLib) {
-                    stream.emit('error', new Miniget.MinigetError('Invalid URL object from `transform` function'));
-                    return;
-                }
-            }
-        }
-        const onError = (err) => {
-            if (stream.destroyed || stream.readableEnded) {
-                return;
-            }
-            // Needed for node v10.
-            if (stream._readableState.ended) {
-                return;
-            }
-            cleanup();
-            if (!retryRequest({ err })) {
-                stream.emit('error', err);
-            }
-            else {
-                activeRequest.removeListener('close', onRequestClose);
-            }
-        };
-        const onRequestClose = () => {
-            cleanup();
-            retryRequest({});
-        };
-        const cleanup = () => {
-            activeRequest.removeListener('close', onRequestClose);
-            activeResponse === null || activeResponse === void 0 ? void 0 : activeResponse.removeListener('data', onData);
-            activeDecodedStream === null || activeDecodedStream === void 0 ? void 0 : activeDecodedStream.removeListener('end', onEnd);
-        };
-        const onData = (chunk) => { downloaded += chunk.length; };
-        const onEnd = () => {
-            cleanup();
-            if (!reconnectIfEndedEarly()) {
-                stream.end();
-            }
-        };
-        activeRequest = httpLib.request(parsed, (res) => {
-            // Needed for node v10, v12.
-            // istanbul ignore next
-            if (stream.destroyed) {
-                return;
-            }
-            if (redirectStatusCodes.has(res.statusCode)) {
-                if (redirects++ >= opts.maxRedirects) {
-                    stream.emit('error', new Miniget.MinigetError('Too many redirects'));
-                }
-                else {
-                    if (res.headers.location) {
-                        url = res.headers.location;
-                    }
-                    else {
-                        let err = new Miniget.MinigetError('Redirect status code given with no location', res.statusCode);
-                        stream.emit('error', err);
-                        cleanup();
-                        return;
-                    }
-                    setTimeout(doDownload, parseInt(res.headers['retry-after'] || '0', 10) * 1000);
-                    stream.emit('redirect', url);
-                }
-                cleanup();
-                return;
-                // Check for rate limiting.
-            }
-            else if (retryStatusCodes.has(res.statusCode)) {
-                if (!retryRequest({ retryAfter: parseInt(res.headers['retry-after'] || '0', 10) })) {
-                    let err = new Miniget.MinigetError(`Status code: ${res.statusCode}`, res.statusCode);
-                    stream.emit('error', err);
-                }
-                cleanup();
-                return;
-            }
-            else if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 400)) {
-                let err = new Miniget.MinigetError(`Status code: ${res.statusCode}`, res.statusCode);
-                if (res.statusCode >= 500) {
-                    onError(err);
-                }
-                else {
-                    stream.emit('error', err);
-                }
-                cleanup();
-                return;
-            }
-            activeDecodedStream = res;
-            if (opts.acceptEncoding && res.headers['content-encoding']) {
-                for (let enc of res.headers['content-encoding'].split(', ').reverse()) {
-                    let fn = opts.acceptEncoding[enc];
-                    if (fn) {
-                        activeDecodedStream = activeDecodedStream.pipe(fn());
-                        activeDecodedStream.on('error', onError);
-                    }
-                }
-            }
-            if (!contentLength) {
-                contentLength = parseInt(`${res.headers['content-length']}`, 10);
-                acceptRanges = res.headers['accept-ranges'] === 'bytes' &&
-                    contentLength > 0 && opts.maxReconnects > 0;
-            }
-            res.on('data', onData);
-            activeDecodedStream.on('end', onEnd);
-            activeDecodedStream.pipe(stream, { end: !acceptRanges });
-            activeResponse = res;
-            stream.emit('response', res);
-            res.on('error', onError);
-            forwardEvents(res, responseEvents);
-        });
-        activeRequest.on('error', onError);
-        activeRequest.on('close', onRequestClose);
-        forwardEvents(activeRequest, requestEvents);
-        if (stream.destroyed) {
-            streamDestroy(...destroyArgs);
-        }
-        stream.emit('request', activeRequest);
-        activeRequest.end();
-    };
-    stream.abort = (err) => {
-        console.warn('`MinigetStream#abort()` has been deprecated in favor of `MinigetStream#destroy()`');
-        stream.aborted = true;
-        stream.emit('abort');
-        stream.destroy(err);
-    };
-    let destroyArgs;
-    const streamDestroy = (err) => {
-        activeRequest.destroy(err);
-        activeDecodedStream === null || activeDecodedStream === void 0 ? void 0 : activeDecodedStream.unpipe(stream);
-        activeDecodedStream === null || activeDecodedStream === void 0 ? void 0 : activeDecodedStream.destroy();
-        clearTimeout(retryTimeout);
-    };
-    stream._destroy = (...args) => {
-        stream.destroyed = true;
-        if (activeRequest) {
-            streamDestroy(...args);
-        }
-        else {
-            destroyArgs = args;
-        }
-    };
-    stream.text = () => new Promise((resolve, reject) => {
-        let body = '';
-        stream.setEncoding('utf8');
-        stream.on('data', chunk => body += chunk);
-        stream.on('end', () => resolve(body));
-        stream.on('error', reject);
-    });
-    process.nextTick(doDownload);
-    return stream;
-}
-module.exports = Miniget;
-
-}).call(this)}).call(this,require('_process'))
-},{"_process":66,"http":87,"https":54,"stream":72}],8:[function(require,module,exports){
-(function (Buffer){(function (){
-;(function (sax) { // wrapper for non-node envs
-  sax.parser = function (strict, opt) { return new SAXParser(strict, opt) }
-  sax.SAXParser = SAXParser
-  sax.SAXStream = SAXStream
-  sax.createStream = createStream
-
-  // When we pass the MAX_BUFFER_LENGTH position, start checking for buffer overruns.
-  // When we check, schedule the next check for MAX_BUFFER_LENGTH - (max(buffer lengths)),
-  // since that's the earliest that a buffer overrun could occur.  This way, checks are
-  // as rare as required, but as often as necessary to ensure never crossing this bound.
-  // Furthermore, buffers are only tested at most once per write(), so passing a very
-  // large string into write() might have undesirable effects, but this is manageable by
-  // the caller, so it is assumed to be safe.  Thus, a call to write() may, in the extreme
-  // edge case, result in creating at most one complete copy of the string passed in.
-  // Set to Infinity to have unlimited buffers.
-  sax.MAX_BUFFER_LENGTH = 64 * 1024
-
-  var buffers = [
-    'comment', 'sgmlDecl', 'textNode', 'tagName', 'doctype',
-    'procInstName', 'procInstBody', 'entity', 'attribName',
-    'attribValue', 'cdata', 'script'
-  ]
-
-  sax.EVENTS = [
-    'text',
-    'processinginstruction',
-    'sgmldeclaration',
-    'doctype',
-    'comment',
-    'opentagstart',
-    'attribute',
-    'opentag',
-    'closetag',
-    'opencdata',
-    'cdata',
-    'closecdata',
-    'error',
-    'end',
-    'ready',
-    'script',
-    'opennamespace',
-    'closenamespace'
-  ]
-
-  function SAXParser (strict, opt) {
-    if (!(this instanceof SAXParser)) {
-      return new SAXParser(strict, opt)
-    }
-
-    var parser = this
-    clearBuffers(parser)
-    parser.q = parser.c = ''
-    parser.bufferCheckPosition = sax.MAX_BUFFER_LENGTH
-    parser.opt = opt || {}
-    parser.opt.lowercase = parser.opt.lowercase || parser.opt.lowercasetags
-    parser.looseCase = parser.opt.lowercase ? 'toLowerCase' : 'toUpperCase'
-    parser.tags = []
-    parser.closed = parser.closedRoot = parser.sawRoot = false
-    parser.tag = parser.error = null
-    parser.strict = !!strict
-    parser.noscript = !!(strict || parser.opt.noscript)
-    parser.state = S.BEGIN
-    parser.strictEntities = parser.opt.strictEntities
-    parser.ENTITIES = parser.strictEntities ? Object.create(sax.XML_ENTITIES) : Object.create(sax.ENTITIES)
-    parser.attribList = []
-
-    // namespaces form a prototype chain.
-    // it always points at the current tag,
-    // which protos to its parent tag.
-    if (parser.opt.xmlns) {
-      parser.ns = Object.create(rootNS)
-    }
-
-    // mostly just for error reporting
-    parser.trackPosition = parser.opt.position !== false
-    if (parser.trackPosition) {
-      parser.position = parser.line = parser.column = 0
-    }
-    emit(parser, 'onready')
-  }
-
-  if (!Object.create) {
-    Object.create = function (o) {
-      function F () {}
-      F.prototype = o
-      var newf = new F()
-      return newf
-    }
-  }
-
-  if (!Object.keys) {
-    Object.keys = function (o) {
-      var a = []
-      for (var i in o) if (o.hasOwnProperty(i)) a.push(i)
-      return a
-    }
-  }
-
-  function checkBufferLength (parser) {
-    var maxAllowed = Math.max(sax.MAX_BUFFER_LENGTH, 10)
-    var maxActual = 0
-    for (var i = 0, l = buffers.length; i < l; i++) {
-      var len = parser[buffers[i]].length
-      if (len > maxAllowed) {
-        // Text/cdata nodes can get big, and since they're buffered,
-        // we can get here under normal conditions.
-        // Avoid issues by emitting the text node now,
-        // so at least it won't get any bigger.
-        switch (buffers[i]) {
-          case 'textNode':
-            closeText(parser)
-            break
-
-          case 'cdata':
-            emitNode(parser, 'oncdata', parser.cdata)
-            parser.cdata = ''
-            break
-
-          case 'script':
-            emitNode(parser, 'onscript', parser.script)
-            parser.script = ''
-            break
-
-          default:
-            error(parser, 'Max buffer length exceeded: ' + buffers[i])
-        }
-      }
-      maxActual = Math.max(maxActual, len)
-    }
-    // schedule the next check for the earliest possible buffer overrun.
-    var m = sax.MAX_BUFFER_LENGTH - maxActual
-    parser.bufferCheckPosition = m + parser.position
-  }
-
-  function clearBuffers (parser) {
-    for (var i = 0, l = buffers.length; i < l; i++) {
-      parser[buffers[i]] = ''
-    }
-  }
-
-  function flushBuffers (parser) {
-    closeText(parser)
-    if (parser.cdata !== '') {
-      emitNode(parser, 'oncdata', parser.cdata)
-      parser.cdata = ''
-    }
-    if (parser.script !== '') {
-      emitNode(parser, 'onscript', parser.script)
-      parser.script = ''
-    }
-  }
-
-  SAXParser.prototype = {
-    end: function () { end(this) },
-    write: write,
-    resume: function () { this.error = null; return this },
-    close: function () { return this.write(null) },
-    flush: function () { flushBuffers(this) }
-  }
-
-  var Stream
-  try {
-    Stream = require('stream').Stream
-  } catch (ex) {
-    Stream = function () {}
-  }
-
-  var streamWraps = sax.EVENTS.filter(function (ev) {
-    return ev !== 'error' && ev !== 'end'
-  })
-
-  function createStream (strict, opt) {
-    return new SAXStream(strict, opt)
-  }
-
-  function SAXStream (strict, opt) {
-    if (!(this instanceof SAXStream)) {
-      return new SAXStream(strict, opt)
-    }
-
-    Stream.apply(this)
-
-    this._parser = new SAXParser(strict, opt)
-    this.writable = true
-    this.readable = true
-
-    var me = this
-
-    this._parser.onend = function () {
-      me.emit('end')
-    }
-
-    this._parser.onerror = function (er) {
-      me.emit('error', er)
-
-      // if didn't throw, then means error was handled.
-      // go ahead and clear error, so we can write again.
-      me._parser.error = null
-    }
-
-    this._decoder = null
-
-    streamWraps.forEach(function (ev) {
-      Object.defineProperty(me, 'on' + ev, {
-        get: function () {
-          return me._parser['on' + ev]
-        },
-        set: function (h) {
-          if (!h) {
-            me.removeAllListeners(ev)
-            me._parser['on' + ev] = h
-            return h
-          }
-          me.on(ev, h)
-        },
-        enumerable: true,
-        configurable: false
-      })
-    })
-  }
-
-  SAXStream.prototype = Object.create(Stream.prototype, {
-    constructor: {
-      value: SAXStream
-    }
-  })
-
-  SAXStream.prototype.write = function (data) {
-    if (typeof Buffer === 'function' &&
-      typeof Buffer.isBuffer === 'function' &&
-      Buffer.isBuffer(data)) {
-      if (!this._decoder) {
-        var SD = require('string_decoder').StringDecoder
-        this._decoder = new SD('utf8')
-      }
-      data = this._decoder.write(data)
-    }
-
-    this._parser.write(data.toString())
-    this.emit('data', data)
-    return true
-  }
-
-  SAXStream.prototype.end = function (chunk) {
-    if (chunk && chunk.length) {
-      this.write(chunk)
-    }
-    this._parser.end()
-    return true
-  }
-
-  SAXStream.prototype.on = function (ev, handler) {
-    var me = this
-    if (!me._parser['on' + ev] && streamWraps.indexOf(ev) !== -1) {
-      me._parser['on' + ev] = function () {
-        var args = arguments.length === 1 ? [arguments[0]] : Array.apply(null, arguments)
-        args.splice(0, 0, ev)
-        me.emit.apply(me, args)
-      }
-    }
-
-    return Stream.prototype.on.call(me, ev, handler)
-  }
-
-  // this really needs to be replaced with character classes.
-  // XML allows all manner of ridiculous numbers and digits.
-  var CDATA = '[CDATA['
-  var DOCTYPE = 'DOCTYPE'
-  var XML_NAMESPACE = 'http://www.w3.org/XML/1998/namespace'
-  var XMLNS_NAMESPACE = 'http://www.w3.org/2000/xmlns/'
-  var rootNS = { xml: XML_NAMESPACE, xmlns: XMLNS_NAMESPACE }
-
-  // http://www.w3.org/TR/REC-xml/#NT-NameStartChar
-  // This implementation works on strings, a single character at a time
-  // as such, it cannot ever support astral-plane characters (10000-EFFFF)
-  // without a significant breaking change to either this  parser, or the
-  // JavaScript language.  Implementation of an emoji-capable xml parser
-  // is left as an exercise for the reader.
-  var nameStart = /[:_A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/
-
-  var nameBody = /[:_A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD\u00B7\u0300-\u036F\u203F-\u2040.\d-]/
-
-  var entityStart = /[#:_A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/
-  var entityBody = /[#:_A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD\u00B7\u0300-\u036F\u203F-\u2040.\d-]/
-
-  function isWhitespace (c) {
-    return c === ' ' || c === '\n' || c === '\r' || c === '\t'
-  }
-
-  function isQuote (c) {
-    return c === '"' || c === '\''
-  }
-
-  function isAttribEnd (c) {
-    return c === '>' || isWhitespace(c)
-  }
-
-  function isMatch (regex, c) {
-    return regex.test(c)
-  }
-
-  function notMatch (regex, c) {
-    return !isMatch(regex, c)
-  }
-
-  var S = 0
-  sax.STATE = {
-    BEGIN: S++, // leading byte order mark or whitespace
-    BEGIN_WHITESPACE: S++, // leading whitespace
-    TEXT: S++, // general stuff
-    TEXT_ENTITY: S++, // &amp and such.
-    OPEN_WAKA: S++, // <
-    SGML_DECL: S++, // <!BLARG
-    SGML_DECL_QUOTED: S++, // <!BLARG foo "bar
-    DOCTYPE: S++, // <!DOCTYPE
-    DOCTYPE_QUOTED: S++, // <!DOCTYPE "//blah
-    DOCTYPE_DTD: S++, // <!DOCTYPE "//blah" [ ...
-    DOCTYPE_DTD_QUOTED: S++, // <!DOCTYPE "//blah" [ "foo
-    COMMENT_STARTING: S++, // <!-
-    COMMENT: S++, // <!--
-    COMMENT_ENDING: S++, // <!-- blah -
-    COMMENT_ENDED: S++, // <!-- blah --
-    CDATA: S++, // <![CDATA[ something
-    CDATA_ENDING: S++, // ]
-    CDATA_ENDING_2: S++, // ]]
-    PROC_INST: S++, // <?hi
-    PROC_INST_BODY: S++, // <?hi there
-    PROC_INST_ENDING: S++, // <?hi "there" ?
-    OPEN_TAG: S++, // <strong
-    OPEN_TAG_SLASH: S++, // <strong /
-    ATTRIB: S++, // <a
-    ATTRIB_NAME: S++, // <a foo
-    ATTRIB_NAME_SAW_WHITE: S++, // <a foo _
-    ATTRIB_VALUE: S++, // <a foo=
-    ATTRIB_VALUE_QUOTED: S++, // <a foo="bar
-    ATTRIB_VALUE_CLOSED: S++, // <a foo="bar"
-    ATTRIB_VALUE_UNQUOTED: S++, // <a foo=bar
-    ATTRIB_VALUE_ENTITY_Q: S++, // <foo bar="&quot;"
-    ATTRIB_VALUE_ENTITY_U: S++, // <foo bar=&quot
-    CLOSE_TAG: S++, // </a
-    CLOSE_TAG_SAW_WHITE: S++, // </a   >
-    SCRIPT: S++, // <script> ...
-    SCRIPT_ENDING: S++ // <script> ... <
-  }
-
-  sax.XML_ENTITIES = {
-    'amp': '&',
-    'gt': '>',
-    'lt': '<',
-    'quot': '"',
-    'apos': "'"
-  }
-
-  sax.ENTITIES = {
-    'amp': '&',
-    'gt': '>',
-    'lt': '<',
-    'quot': '"',
-    'apos': "'",
-    'AElig': 198,
-    'Aacute': 193,
-    'Acirc': 194,
-    'Agrave': 192,
-    'Aring': 197,
-    'Atilde': 195,
-    'Auml': 196,
-    'Ccedil': 199,
-    'ETH': 208,
-    'Eacute': 201,
-    'Ecirc': 202,
-    'Egrave': 200,
-    'Euml': 203,
-    'Iacute': 205,
-    'Icirc': 206,
-    'Igrave': 204,
-    'Iuml': 207,
-    'Ntilde': 209,
-    'Oacute': 211,
-    'Ocirc': 212,
-    'Ograve': 210,
-    'Oslash': 216,
-    'Otilde': 213,
-    'Ouml': 214,
-    'THORN': 222,
-    'Uacute': 218,
-    'Ucirc': 219,
-    'Ugrave': 217,
-    'Uuml': 220,
-    'Yacute': 221,
-    'aacute': 225,
-    'acirc': 226,
-    'aelig': 230,
-    'agrave': 224,
-    'aring': 229,
-    'atilde': 227,
-    'auml': 228,
-    'ccedil': 231,
-    'eacute': 233,
-    'ecirc': 234,
-    'egrave': 232,
-    'eth': 240,
-    'euml': 235,
-    'iacute': 237,
-    'icirc': 238,
-    'igrave': 236,
-    'iuml': 239,
-    'ntilde': 241,
-    'oacute': 243,
-    'ocirc': 244,
-    'ograve': 242,
-    'oslash': 248,
-    'otilde': 245,
-    'ouml': 246,
-    'szlig': 223,
-    'thorn': 254,
-    'uacute': 250,
-    'ucirc': 251,
-    'ugrave': 249,
-    'uuml': 252,
-    'yacute': 253,
-    'yuml': 255,
-    'copy': 169,
-    'reg': 174,
-    'nbsp': 160,
-    'iexcl': 161,
-    'cent': 162,
-    'pound': 163,
-    'curren': 164,
-    'yen': 165,
-    'brvbar': 166,
-    'sect': 167,
-    'uml': 168,
-    'ordf': 170,
-    'laquo': 171,
-    'not': 172,
-    'shy': 173,
-    'macr': 175,
-    'deg': 176,
-    'plusmn': 177,
-    'sup1': 185,
-    'sup2': 178,
-    'sup3': 179,
-    'acute': 180,
-    'micro': 181,
-    'para': 182,
-    'middot': 183,
-    'cedil': 184,
-    'ordm': 186,
-    'raquo': 187,
-    'frac14': 188,
-    'frac12': 189,
-    'frac34': 190,
-    'iquest': 191,
-    'times': 215,
-    'divide': 247,
-    'OElig': 338,
-    'oelig': 339,
-    'Scaron': 352,
-    'scaron': 353,
-    'Yuml': 376,
-    'fnof': 402,
-    'circ': 710,
-    'tilde': 732,
-    'Alpha': 913,
-    'Beta': 914,
-    'Gamma': 915,
-    'Delta': 916,
-    'Epsilon': 917,
-    'Zeta': 918,
-    'Eta': 919,
-    'Theta': 920,
-    'Iota': 921,
-    'Kappa': 922,
-    'Lambda': 923,
-    'Mu': 924,
-    'Nu': 925,
-    'Xi': 926,
-    'Omicron': 927,
-    'Pi': 928,
-    'Rho': 929,
-    'Sigma': 931,
-    'Tau': 932,
-    'Upsilon': 933,
-    'Phi': 934,
-    'Chi': 935,
-    'Psi': 936,
-    'Omega': 937,
-    'alpha': 945,
-    'beta': 946,
-    'gamma': 947,
-    'delta': 948,
-    'epsilon': 949,
-    'zeta': 950,
-    'eta': 951,
-    'theta': 952,
-    'iota': 953,
-    'kappa': 954,
-    'lambda': 955,
-    'mu': 956,
-    'nu': 957,
-    'xi': 958,
-    'omicron': 959,
-    'pi': 960,
-    'rho': 961,
-    'sigmaf': 962,
-    'sigma': 963,
-    'tau': 964,
-    'upsilon': 965,
-    'phi': 966,
-    'chi': 967,
-    'psi': 968,
-    'omega': 969,
-    'thetasym': 977,
-    'upsih': 978,
-    'piv': 982,
-    'ensp': 8194,
-    'emsp': 8195,
-    'thinsp': 8201,
-    'zwnj': 8204,
-    'zwj': 8205,
-    'lrm': 8206,
-    'rlm': 8207,
-    'ndash': 8211,
-    'mdash': 8212,
-    'lsquo': 8216,
-    'rsquo': 8217,
-    'sbquo': 8218,
-    'ldquo': 8220,
-    'rdquo': 8221,
-    'bdquo': 8222,
-    'dagger': 8224,
-    'Dagger': 8225,
-    'bull': 8226,
-    'hellip': 8230,
-    'permil': 8240,
-    'prime': 8242,
-    'Prime': 8243,
-    'lsaquo': 8249,
-    'rsaquo': 8250,
-    'oline': 8254,
-    'frasl': 8260,
-    'euro': 8364,
-    'image': 8465,
-    'weierp': 8472,
-    'real': 8476,
-    'trade': 8482,
-    'alefsym': 8501,
-    'larr': 8592,
-    'uarr': 8593,
-    'rarr': 8594,
-    'darr': 8595,
-    'harr': 8596,
-    'crarr': 8629,
-    'lArr': 8656,
-    'uArr': 8657,
-    'rArr': 8658,
-    'dArr': 8659,
-    'hArr': 8660,
-    'forall': 8704,
-    'part': 8706,
-    'exist': 8707,
-    'empty': 8709,
-    'nabla': 8711,
-    'isin': 8712,
-    'notin': 8713,
-    'ni': 8715,
-    'prod': 8719,
-    'sum': 8721,
-    'minus': 8722,
-    'lowast': 8727,
-    'radic': 8730,
-    'prop': 8733,
-    'infin': 8734,
-    'ang': 8736,
-    'and': 8743,
-    'or': 8744,
-    'cap': 8745,
-    'cup': 8746,
-    'int': 8747,
-    'there4': 8756,
-    'sim': 8764,
-    'cong': 8773,
-    'asymp': 8776,
-    'ne': 8800,
-    'equiv': 8801,
-    'le': 8804,
-    'ge': 8805,
-    'sub': 8834,
-    'sup': 8835,
-    'nsub': 8836,
-    'sube': 8838,
-    'supe': 8839,
-    'oplus': 8853,
-    'otimes': 8855,
-    'perp': 8869,
-    'sdot': 8901,
-    'lceil': 8968,
-    'rceil': 8969,
-    'lfloor': 8970,
-    'rfloor': 8971,
-    'lang': 9001,
-    'rang': 9002,
-    'loz': 9674,
-    'spades': 9824,
-    'clubs': 9827,
-    'hearts': 9829,
-    'diams': 9830
-  }
-
-  Object.keys(sax.ENTITIES).forEach(function (key) {
-    var e = sax.ENTITIES[key]
-    var s = typeof e === 'number' ? String.fromCharCode(e) : e
-    sax.ENTITIES[key] = s
-  })
-
-  for (var s in sax.STATE) {
-    sax.STATE[sax.STATE[s]] = s
-  }
-
-  // shorthand
-  S = sax.STATE
-
-  function emit (parser, event, data) {
-    parser[event] && parser[event](data)
-  }
-
-  function emitNode (parser, nodeType, data) {
-    if (parser.textNode) closeText(parser)
-    emit(parser, nodeType, data)
-  }
-
-  function closeText (parser) {
-    parser.textNode = textopts(parser.opt, parser.textNode)
-    if (parser.textNode) emit(parser, 'ontext', parser.textNode)
-    parser.textNode = ''
-  }
-
-  function textopts (opt, text) {
-    if (opt.trim) text = text.trim()
-    if (opt.normalize) text = text.replace(/\s+/g, ' ')
-    return text
-  }
-
-  function error (parser, er) {
-    closeText(parser)
-    if (parser.trackPosition) {
-      er += '\nLine: ' + parser.line +
-        '\nColumn: ' + parser.column +
-        '\nChar: ' + parser.c
-    }
-    er = new Error(er)
-    parser.error = er
-    emit(parser, 'onerror', er)
-    return parser
-  }
-
-  function end (parser) {
-    if (parser.sawRoot && !parser.closedRoot) strictFail(parser, 'Unclosed root tag')
-    if ((parser.state !== S.BEGIN) &&
-      (parser.state !== S.BEGIN_WHITESPACE) &&
-      (parser.state !== S.TEXT)) {
-      error(parser, 'Unexpected end')
-    }
-    closeText(parser)
-    parser.c = ''
-    parser.closed = true
-    emit(parser, 'onend')
-    SAXParser.call(parser, parser.strict, parser.opt)
-    return parser
-  }
-
-  function strictFail (parser, message) {
-    if (typeof parser !== 'object' || !(parser instanceof SAXParser)) {
-      throw new Error('bad call to strictFail')
-    }
-    if (parser.strict) {
-      error(parser, message)
-    }
-  }
-
-  function newTag (parser) {
-    if (!parser.strict) parser.tagName = parser.tagName[parser.looseCase]()
-    var parent = parser.tags[parser.tags.length - 1] || parser
-    var tag = parser.tag = { name: parser.tagName, attributes: {} }
-
-    // will be overridden if tag contails an xmlns="foo" or xmlns:foo="bar"
-    if (parser.opt.xmlns) {
-      tag.ns = parent.ns
-    }
-    parser.attribList.length = 0
-    emitNode(parser, 'onopentagstart', tag)
-  }
-
-  function qname (name, attribute) {
-    var i = name.indexOf(':')
-    var qualName = i < 0 ? [ '', name ] : name.split(':')
-    var prefix = qualName[0]
-    var local = qualName[1]
-
-    // <x "xmlns"="http://foo">
-    if (attribute && name === 'xmlns') {
-      prefix = 'xmlns'
-      local = ''
-    }
-
-    return { prefix: prefix, local: local }
-  }
-
-  function attrib (parser) {
-    if (!parser.strict) {
-      parser.attribName = parser.attribName[parser.looseCase]()
-    }
-
-    if (parser.attribList.indexOf(parser.attribName) !== -1 ||
-      parser.tag.attributes.hasOwnProperty(parser.attribName)) {
-      parser.attribName = parser.attribValue = ''
-      return
-    }
-
-    if (parser.opt.xmlns) {
-      var qn = qname(parser.attribName, true)
-      var prefix = qn.prefix
-      var local = qn.local
-
-      if (prefix === 'xmlns') {
-        // namespace binding attribute. push the binding into scope
-        if (local === 'xml' && parser.attribValue !== XML_NAMESPACE) {
-          strictFail(parser,
-            'xml: prefix must be bound to ' + XML_NAMESPACE + '\n' +
-            'Actual: ' + parser.attribValue)
-        } else if (local === 'xmlns' && parser.attribValue !== XMLNS_NAMESPACE) {
-          strictFail(parser,
-            'xmlns: prefix must be bound to ' + XMLNS_NAMESPACE + '\n' +
-            'Actual: ' + parser.attribValue)
-        } else {
-          var tag = parser.tag
-          var parent = parser.tags[parser.tags.length - 1] || parser
-          if (tag.ns === parent.ns) {
-            tag.ns = Object.create(parent.ns)
-          }
-          tag.ns[local] = parser.attribValue
-        }
-      }
-
-      // defer onattribute events until all attributes have been seen
-      // so any new bindings can take effect. preserve attribute order
-      // so deferred events can be emitted in document order
-      parser.attribList.push([parser.attribName, parser.attribValue])
-    } else {
-      // in non-xmlns mode, we can emit the event right away
-      parser.tag.attributes[parser.attribName] = parser.attribValue
-      emitNode(parser, 'onattribute', {
-        name: parser.attribName,
-        value: parser.attribValue
-      })
-    }
-
-    parser.attribName = parser.attribValue = ''
-  }
-
-  function openTag (parser, selfClosing) {
-    if (parser.opt.xmlns) {
-      // emit namespace binding events
-      var tag = parser.tag
-
-      // add namespace info to tag
-      var qn = qname(parser.tagName)
-      tag.prefix = qn.prefix
-      tag.local = qn.local
-      tag.uri = tag.ns[qn.prefix] || ''
-
-      if (tag.prefix && !tag.uri) {
-        strictFail(parser, 'Unbound namespace prefix: ' +
-          JSON.stringify(parser.tagName))
-        tag.uri = qn.prefix
-      }
-
-      var parent = parser.tags[parser.tags.length - 1] || parser
-      if (tag.ns && parent.ns !== tag.ns) {
-        Object.keys(tag.ns).forEach(function (p) {
-          emitNode(parser, 'onopennamespace', {
-            prefix: p,
-            uri: tag.ns[p]
-          })
-        })
-      }
-
-      // handle deferred onattribute events
-      // Note: do not apply default ns to attributes:
-      //   http://www.w3.org/TR/REC-xml-names/#defaulting
-      for (var i = 0, l = parser.attribList.length; i < l; i++) {
-        var nv = parser.attribList[i]
-        var name = nv[0]
-        var value = nv[1]
-        var qualName = qname(name, true)
-        var prefix = qualName.prefix
-        var local = qualName.local
-        var uri = prefix === '' ? '' : (tag.ns[prefix] || '')
-        var a = {
-          name: name,
-          value: value,
-          prefix: prefix,
-          local: local,
-          uri: uri
-        }
-
-        // if there's any attributes with an undefined namespace,
-        // then fail on them now.
-        if (prefix && prefix !== 'xmlns' && !uri) {
-          strictFail(parser, 'Unbound namespace prefix: ' +
-            JSON.stringify(prefix))
-          a.uri = prefix
-        }
-        parser.tag.attributes[name] = a
-        emitNode(parser, 'onattribute', a)
-      }
-      parser.attribList.length = 0
-    }
-
-    parser.tag.isSelfClosing = !!selfClosing
-
-    // process the tag
-    parser.sawRoot = true
-    parser.tags.push(parser.tag)
-    emitNode(parser, 'onopentag', parser.tag)
-    if (!selfClosing) {
-      // special case for <script> in non-strict mode.
-      if (!parser.noscript && parser.tagName.toLowerCase() === 'script') {
-        parser.state = S.SCRIPT
-      } else {
-        parser.state = S.TEXT
-      }
-      parser.tag = null
-      parser.tagName = ''
-    }
-    parser.attribName = parser.attribValue = ''
-    parser.attribList.length = 0
-  }
-
-  function closeTag (parser) {
-    if (!parser.tagName) {
-      strictFail(parser, 'Weird empty close tag.')
-      parser.textNode += '</>'
-      parser.state = S.TEXT
-      return
-    }
-
-    if (parser.script) {
-      if (parser.tagName !== 'script') {
-        parser.script += '</' + parser.tagName + '>'
-        parser.tagName = ''
-        parser.state = S.SCRIPT
-        return
-      }
-      emitNode(parser, 'onscript', parser.script)
-      parser.script = ''
-    }
-
-    // first make sure that the closing tag actually exists.
-    // <a><b></c></b></a> will close everything, otherwise.
-    var t = parser.tags.length
-    var tagName = parser.tagName
-    if (!parser.strict) {
-      tagName = tagName[parser.looseCase]()
-    }
-    var closeTo = tagName
-    while (t--) {
-      var close = parser.tags[t]
-      if (close.name !== closeTo) {
-        // fail the first time in strict mode
-        strictFail(parser, 'Unexpected close tag')
-      } else {
-        break
-      }
-    }
-
-    // didn't find it.  we already failed for strict, so just abort.
-    if (t < 0) {
-      strictFail(parser, 'Unmatched closing tag: ' + parser.tagName)
-      parser.textNode += '</' + parser.tagName + '>'
-      parser.state = S.TEXT
-      return
-    }
-    parser.tagName = tagName
-    var s = parser.tags.length
-    while (s-- > t) {
-      var tag = parser.tag = parser.tags.pop()
-      parser.tagName = parser.tag.name
-      emitNode(parser, 'onclosetag', parser.tagName)
-
-      var x = {}
-      for (var i in tag.ns) {
-        x[i] = tag.ns[i]
-      }
-
-      var parent = parser.tags[parser.tags.length - 1] || parser
-      if (parser.opt.xmlns && tag.ns !== parent.ns) {
-        // remove namespace bindings introduced by tag
-        Object.keys(tag.ns).forEach(function (p) {
-          var n = tag.ns[p]
-          emitNode(parser, 'onclosenamespace', { prefix: p, uri: n })
-        })
-      }
-    }
-    if (t === 0) parser.closedRoot = true
-    parser.tagName = parser.attribValue = parser.attribName = ''
-    parser.attribList.length = 0
-    parser.state = S.TEXT
-  }
-
-  function parseEntity (parser) {
-    var entity = parser.entity
-    var entityLC = entity.toLowerCase()
-    var num
-    var numStr = ''
-
-    if (parser.ENTITIES[entity]) {
-      return parser.ENTITIES[entity]
-    }
-    if (parser.ENTITIES[entityLC]) {
-      return parser.ENTITIES[entityLC]
-    }
-    entity = entityLC
-    if (entity.charAt(0) === '#') {
-      if (entity.charAt(1) === 'x') {
-        entity = entity.slice(2)
-        num = parseInt(entity, 16)
-        numStr = num.toString(16)
-      } else {
-        entity = entity.slice(1)
-        num = parseInt(entity, 10)
-        numStr = num.toString(10)
-      }
-    }
-    entity = entity.replace(/^0+/, '')
-    if (isNaN(num) || numStr.toLowerCase() !== entity) {
-      strictFail(parser, 'Invalid character entity')
-      return '&' + parser.entity + ';'
-    }
-
-    return String.fromCodePoint(num)
-  }
-
-  function beginWhiteSpace (parser, c) {
-    if (c === '<') {
-      parser.state = S.OPEN_WAKA
-      parser.startTagPosition = parser.position
-    } else if (!isWhitespace(c)) {
-      // have to process this as a text node.
-      // weird, but happens.
-      strictFail(parser, 'Non-whitespace before first tag.')
-      parser.textNode = c
-      parser.state = S.TEXT
-    }
-  }
-
-  function charAt (chunk, i) {
-    var result = ''
-    if (i < chunk.length) {
-      result = chunk.charAt(i)
-    }
-    return result
-  }
-
-  function write (chunk) {
-    var parser = this
-    if (this.error) {
-      throw this.error
-    }
-    if (parser.closed) {
-      return error(parser,
-        'Cannot write after close. Assign an onready handler.')
-    }
-    if (chunk === null) {
-      return end(parser)
-    }
-    if (typeof chunk === 'object') {
-      chunk = chunk.toString()
-    }
-    var i = 0
-    var c = ''
-    while (true) {
-      c = charAt(chunk, i++)
-      parser.c = c
-
-      if (!c) {
-        break
-      }
-
-      if (parser.trackPosition) {
-        parser.position++
-        if (c === '\n') {
-          parser.line++
-          parser.column = 0
-        } else {
-          parser.column++
-        }
-      }
-
-      switch (parser.state) {
-        case S.BEGIN:
-          parser.state = S.BEGIN_WHITESPACE
-          if (c === '\uFEFF') {
-            continue
-          }
-          beginWhiteSpace(parser, c)
-          continue
-
-        case S.BEGIN_WHITESPACE:
-          beginWhiteSpace(parser, c)
-          continue
-
-        case S.TEXT:
-          if (parser.sawRoot && !parser.closedRoot) {
-            var starti = i - 1
-            while (c && c !== '<' && c !== '&') {
-              c = charAt(chunk, i++)
-              if (c && parser.trackPosition) {
-                parser.position++
-                if (c === '\n') {
-                  parser.line++
-                  parser.column = 0
-                } else {
-                  parser.column++
-                }
-              }
-            }
-            parser.textNode += chunk.substring(starti, i - 1)
-          }
-          if (c === '<' && !(parser.sawRoot && parser.closedRoot && !parser.strict)) {
-            parser.state = S.OPEN_WAKA
-            parser.startTagPosition = parser.position
-          } else {
-            if (!isWhitespace(c) && (!parser.sawRoot || parser.closedRoot)) {
-              strictFail(parser, 'Text data outside of root node.')
-            }
-            if (c === '&') {
-              parser.state = S.TEXT_ENTITY
-            } else {
-              parser.textNode += c
-            }
-          }
-          continue
-
-        case S.SCRIPT:
-          // only non-strict
-          if (c === '<') {
-            parser.state = S.SCRIPT_ENDING
-          } else {
-            parser.script += c
-          }
-          continue
-
-        case S.SCRIPT_ENDING:
-          if (c === '/') {
-            parser.state = S.CLOSE_TAG
-          } else {
-            parser.script += '<' + c
-            parser.state = S.SCRIPT
-          }
-          continue
-
-        case S.OPEN_WAKA:
-          // either a /, ?, !, or text is coming next.
-          if (c === '!') {
-            parser.state = S.SGML_DECL
-            parser.sgmlDecl = ''
-          } else if (isWhitespace(c)) {
-            // wait for it...
-          } else if (isMatch(nameStart, c)) {
-            parser.state = S.OPEN_TAG
-            parser.tagName = c
-          } else if (c === '/') {
-            parser.state = S.CLOSE_TAG
-            parser.tagName = ''
-          } else if (c === '?') {
-            parser.state = S.PROC_INST
-            parser.procInstName = parser.procInstBody = ''
-          } else {
-            strictFail(parser, 'Unencoded <')
-            // if there was some whitespace, then add that in.
-            if (parser.startTagPosition + 1 < parser.position) {
-              var pad = parser.position - parser.startTagPosition
-              c = new Array(pad).join(' ') + c
-            }
-            parser.textNode += '<' + c
-            parser.state = S.TEXT
-          }
-          continue
-
-        case S.SGML_DECL:
-          if ((parser.sgmlDecl + c).toUpperCase() === CDATA) {
-            emitNode(parser, 'onopencdata')
-            parser.state = S.CDATA
-            parser.sgmlDecl = ''
-            parser.cdata = ''
-          } else if (parser.sgmlDecl + c === '--') {
-            parser.state = S.COMMENT
-            parser.comment = ''
-            parser.sgmlDecl = ''
-          } else if ((parser.sgmlDecl + c).toUpperCase() === DOCTYPE) {
-            parser.state = S.DOCTYPE
-            if (parser.doctype || parser.sawRoot) {
-              strictFail(parser,
-                'Inappropriately located doctype declaration')
-            }
-            parser.doctype = ''
-            parser.sgmlDecl = ''
-          } else if (c === '>') {
-            emitNode(parser, 'onsgmldeclaration', parser.sgmlDecl)
-            parser.sgmlDecl = ''
-            parser.state = S.TEXT
-          } else if (isQuote(c)) {
-            parser.state = S.SGML_DECL_QUOTED
-            parser.sgmlDecl += c
-          } else {
-            parser.sgmlDecl += c
-          }
-          continue
-
-        case S.SGML_DECL_QUOTED:
-          if (c === parser.q) {
-            parser.state = S.SGML_DECL
-            parser.q = ''
-          }
-          parser.sgmlDecl += c
-          continue
-
-        case S.DOCTYPE:
-          if (c === '>') {
-            parser.state = S.TEXT
-            emitNode(parser, 'ondoctype', parser.doctype)
-            parser.doctype = true // just remember that we saw it.
-          } else {
-            parser.doctype += c
-            if (c === '[') {
-              parser.state = S.DOCTYPE_DTD
-            } else if (isQuote(c)) {
-              parser.state = S.DOCTYPE_QUOTED
-              parser.q = c
-            }
-          }
-          continue
-
-        case S.DOCTYPE_QUOTED:
-          parser.doctype += c
-          if (c === parser.q) {
-            parser.q = ''
-            parser.state = S.DOCTYPE
-          }
-          continue
-
-        case S.DOCTYPE_DTD:
-          parser.doctype += c
-          if (c === ']') {
-            parser.state = S.DOCTYPE
-          } else if (isQuote(c)) {
-            parser.state = S.DOCTYPE_DTD_QUOTED
-            parser.q = c
-          }
-          continue
-
-        case S.DOCTYPE_DTD_QUOTED:
-          parser.doctype += c
-          if (c === parser.q) {
-            parser.state = S.DOCTYPE_DTD
-            parser.q = ''
-          }
-          continue
-
-        case S.COMMENT:
-          if (c === '-') {
-            parser.state = S.COMMENT_ENDING
-          } else {
-            parser.comment += c
-          }
-          continue
-
-        case S.COMMENT_ENDING:
-          if (c === '-') {
-            parser.state = S.COMMENT_ENDED
-            parser.comment = textopts(parser.opt, parser.comment)
-            if (parser.comment) {
-              emitNode(parser, 'oncomment', parser.comment)
-            }
-            parser.comment = ''
-          } else {
-            parser.comment += '-' + c
-            parser.state = S.COMMENT
-          }
-          continue
-
-        case S.COMMENT_ENDED:
-          if (c !== '>') {
-            strictFail(parser, 'Malformed comment')
-            // allow <!-- blah -- bloo --> in non-strict mode,
-            // which is a comment of " blah -- bloo "
-            parser.comment += '--' + c
-            parser.state = S.COMMENT
-          } else {
-            parser.state = S.TEXT
-          }
-          continue
-
-        case S.CDATA:
-          if (c === ']') {
-            parser.state = S.CDATA_ENDING
-          } else {
-            parser.cdata += c
-          }
-          continue
-
-        case S.CDATA_ENDING:
-          if (c === ']') {
-            parser.state = S.CDATA_ENDING_2
-          } else {
-            parser.cdata += ']' + c
-            parser.state = S.CDATA
-          }
-          continue
-
-        case S.CDATA_ENDING_2:
-          if (c === '>') {
-            if (parser.cdata) {
-              emitNode(parser, 'oncdata', parser.cdata)
-            }
-            emitNode(parser, 'onclosecdata')
-            parser.cdata = ''
-            parser.state = S.TEXT
-          } else if (c === ']') {
-            parser.cdata += ']'
-          } else {
-            parser.cdata += ']]' + c
-            parser.state = S.CDATA
-          }
-          continue
-
-        case S.PROC_INST:
-          if (c === '?') {
-            parser.state = S.PROC_INST_ENDING
-          } else if (isWhitespace(c)) {
-            parser.state = S.PROC_INST_BODY
-          } else {
-            parser.procInstName += c
-          }
-          continue
-
-        case S.PROC_INST_BODY:
-          if (!parser.procInstBody && isWhitespace(c)) {
-            continue
-          } else if (c === '?') {
-            parser.state = S.PROC_INST_ENDING
-          } else {
-            parser.procInstBody += c
-          }
-          continue
-
-        case S.PROC_INST_ENDING:
-          if (c === '>') {
-            emitNode(parser, 'onprocessinginstruction', {
-              name: parser.procInstName,
-              body: parser.procInstBody
-            })
-            parser.procInstName = parser.procInstBody = ''
-            parser.state = S.TEXT
-          } else {
-            parser.procInstBody += '?' + c
-            parser.state = S.PROC_INST_BODY
-          }
-          continue
-
-        case S.OPEN_TAG:
-          if (isMatch(nameBody, c)) {
-            parser.tagName += c
-          } else {
-            newTag(parser)
-            if (c === '>') {
-              openTag(parser)
-            } else if (c === '/') {
-              parser.state = S.OPEN_TAG_SLASH
-            } else {
-              if (!isWhitespace(c)) {
-                strictFail(parser, 'Invalid character in tag name')
-              }
-              parser.state = S.ATTRIB
-            }
-          }
-          continue
-
-        case S.OPEN_TAG_SLASH:
-          if (c === '>') {
-            openTag(parser, true)
-            closeTag(parser)
-          } else {
-            strictFail(parser, 'Forward-slash in opening tag not followed by >')
-            parser.state = S.ATTRIB
-          }
-          continue
-
-        case S.ATTRIB:
-          // haven't read the attribute name yet.
-          if (isWhitespace(c)) {
-            continue
-          } else if (c === '>') {
-            openTag(parser)
-          } else if (c === '/') {
-            parser.state = S.OPEN_TAG_SLASH
-          } else if (isMatch(nameStart, c)) {
-            parser.attribName = c
-            parser.attribValue = ''
-            parser.state = S.ATTRIB_NAME
-          } else {
-            strictFail(parser, 'Invalid attribute name')
-          }
-          continue
-
-        case S.ATTRIB_NAME:
-          if (c === '=') {
-            parser.state = S.ATTRIB_VALUE
-          } else if (c === '>') {
-            strictFail(parser, 'Attribute without value')
-            parser.attribValue = parser.attribName
-            attrib(parser)
-            openTag(parser)
-          } else if (isWhitespace(c)) {
-            parser.state = S.ATTRIB_NAME_SAW_WHITE
-          } else if (isMatch(nameBody, c)) {
-            parser.attribName += c
-          } else {
-            strictFail(parser, 'Invalid attribute name')
-          }
-          continue
-
-        case S.ATTRIB_NAME_SAW_WHITE:
-          if (c === '=') {
-            parser.state = S.ATTRIB_VALUE
-          } else if (isWhitespace(c)) {
-            continue
-          } else {
-            strictFail(parser, 'Attribute without value')
-            parser.tag.attributes[parser.attribName] = ''
-            parser.attribValue = ''
-            emitNode(parser, 'onattribute', {
-              name: parser.attribName,
-              value: ''
-            })
-            parser.attribName = ''
-            if (c === '>') {
-              openTag(parser)
-            } else if (isMatch(nameStart, c)) {
-              parser.attribName = c
-              parser.state = S.ATTRIB_NAME
-            } else {
-              strictFail(parser, 'Invalid attribute name')
-              parser.state = S.ATTRIB
-            }
-          }
-          continue
-
-        case S.ATTRIB_VALUE:
-          if (isWhitespace(c)) {
-            continue
-          } else if (isQuote(c)) {
-            parser.q = c
-            parser.state = S.ATTRIB_VALUE_QUOTED
-          } else {
-            strictFail(parser, 'Unquoted attribute value')
-            parser.state = S.ATTRIB_VALUE_UNQUOTED
-            parser.attribValue = c
-          }
-          continue
-
-        case S.ATTRIB_VALUE_QUOTED:
-          if (c !== parser.q) {
-            if (c === '&') {
-              parser.state = S.ATTRIB_VALUE_ENTITY_Q
-            } else {
-              parser.attribValue += c
-            }
-            continue
-          }
-          attrib(parser)
-          parser.q = ''
-          parser.state = S.ATTRIB_VALUE_CLOSED
-          continue
-
-        case S.ATTRIB_VALUE_CLOSED:
-          if (isWhitespace(c)) {
-            parser.state = S.ATTRIB
-          } else if (c === '>') {
-            openTag(parser)
-          } else if (c === '/') {
-            parser.state = S.OPEN_TAG_SLASH
-          } else if (isMatch(nameStart, c)) {
-            strictFail(parser, 'No whitespace between attributes')
-            parser.attribName = c
-            parser.attribValue = ''
-            parser.state = S.ATTRIB_NAME
-          } else {
-            strictFail(parser, 'Invalid attribute name')
-          }
-          continue
-
-        case S.ATTRIB_VALUE_UNQUOTED:
-          if (!isAttribEnd(c)) {
-            if (c === '&') {
-              parser.state = S.ATTRIB_VALUE_ENTITY_U
-            } else {
-              parser.attribValue += c
-            }
-            continue
-          }
-          attrib(parser)
-          if (c === '>') {
-            openTag(parser)
-          } else {
-            parser.state = S.ATTRIB
-          }
-          continue
-
-        case S.CLOSE_TAG:
-          if (!parser.tagName) {
-            if (isWhitespace(c)) {
-              continue
-            } else if (notMatch(nameStart, c)) {
-              if (parser.script) {
-                parser.script += '</' + c
-                parser.state = S.SCRIPT
-              } else {
-                strictFail(parser, 'Invalid tagname in closing tag.')
-              }
-            } else {
-              parser.tagName = c
-            }
-          } else if (c === '>') {
-            closeTag(parser)
-          } else if (isMatch(nameBody, c)) {
-            parser.tagName += c
-          } else if (parser.script) {
-            parser.script += '</' + parser.tagName
-            parser.tagName = ''
-            parser.state = S.SCRIPT
-          } else {
-            if (!isWhitespace(c)) {
-              strictFail(parser, 'Invalid tagname in closing tag')
-            }
-            parser.state = S.CLOSE_TAG_SAW_WHITE
-          }
-          continue
-
-        case S.CLOSE_TAG_SAW_WHITE:
-          if (isWhitespace(c)) {
-            continue
-          }
-          if (c === '>') {
-            closeTag(parser)
-          } else {
-            strictFail(parser, 'Invalid characters in closing tag')
-          }
-          continue
-
-        case S.TEXT_ENTITY:
-        case S.ATTRIB_VALUE_ENTITY_Q:
-        case S.ATTRIB_VALUE_ENTITY_U:
-          var returnState
-          var buffer
-          switch (parser.state) {
-            case S.TEXT_ENTITY:
-              returnState = S.TEXT
-              buffer = 'textNode'
-              break
-
-            case S.ATTRIB_VALUE_ENTITY_Q:
-              returnState = S.ATTRIB_VALUE_QUOTED
-              buffer = 'attribValue'
-              break
-
-            case S.ATTRIB_VALUE_ENTITY_U:
-              returnState = S.ATTRIB_VALUE_UNQUOTED
-              buffer = 'attribValue'
-              break
-          }
-
-          if (c === ';') {
-            parser[buffer] += parseEntity(parser)
-            parser.entity = ''
-            parser.state = returnState
-          } else if (isMatch(parser.entity.length ? entityBody : entityStart, c)) {
-            parser.entity += c
-          } else {
-            strictFail(parser, 'Invalid character in entity name')
-            parser[buffer] += '&' + parser.entity + c
-            parser.entity = ''
-            parser.state = returnState
-          }
-
-          continue
-
-        default:
-          throw new Error(parser, 'Unknown state: ' + parser.state)
-      }
-    } // while
-
-    if (parser.position >= parser.bufferCheckPosition) {
-      checkBufferLength(parser)
-    }
-    return parser
-  }
-
-  /*! http://mths.be/fromcodepoint v0.1.0 by @mathias */
-  /* istanbul ignore next */
-  if (!String.fromCodePoint) {
-    (function () {
-      var stringFromCharCode = String.fromCharCode
-      var floor = Math.floor
-      var fromCodePoint = function () {
-        var MAX_SIZE = 0x4000
-        var codeUnits = []
-        var highSurrogate
-        var lowSurrogate
-        var index = -1
-        var length = arguments.length
-        if (!length) {
-          return ''
-        }
-        var result = ''
-        while (++index < length) {
-          var codePoint = Number(arguments[index])
-          if (
-            !isFinite(codePoint) || // `NaN`, `+Infinity`, or `-Infinity`
-            codePoint < 0 || // not a valid Unicode code point
-            codePoint > 0x10FFFF || // not a valid Unicode code point
-            floor(codePoint) !== codePoint // not an integer
-          ) {
-            throw RangeError('Invalid code point: ' + codePoint)
-          }
-          if (codePoint <= 0xFFFF) { // BMP code point
-            codeUnits.push(codePoint)
-          } else { // Astral code point; split in surrogate halves
-            // http://mathiasbynens.be/notes/javascript-encoding#surrogate-formulae
-            codePoint -= 0x10000
-            highSurrogate = (codePoint >> 10) + 0xD800
-            lowSurrogate = (codePoint % 0x400) + 0xDC00
-            codeUnits.push(highSurrogate, lowSurrogate)
-          }
-          if (index + 1 === length || codeUnits.length > MAX_SIZE) {
-            result += stringFromCharCode.apply(null, codeUnits)
-            codeUnits.length = 0
-          }
-        }
-        return result
-      }
-      /* istanbul ignore next */
-      if (Object.defineProperty) {
-        Object.defineProperty(String, 'fromCodePoint', {
-          value: fromCodePoint,
-          configurable: true,
-          writable: true
-        })
-      } else {
-        String.fromCodePoint = fromCodePoint
-      }
-    }())
-  }
-})(typeof exports === 'undefined' ? this.sax = {} : exports)
-
-}).call(this)}).call(this,require("buffer").Buffer)
-},{"buffer":24,"stream":72,"string_decoder":107}],9:[function(require,module,exports){
-const { setTimeout } = require('timers');
-
-// A cache that expires.
-module.exports = class Cache extends Map {
-  constructor(timeout = 1000) {
-    super();
-    this.timeout = timeout;
-  }
-  set(key, value) {
-    if (this.has(key)) {
-      clearTimeout(super.get(key).tid);
-    }
-    super.set(key, {
-      tid: setTimeout(this.delete.bind(this, key), this.timeout).unref(),
-      value,
-    });
-  }
-  get(key) {
-    let entry = super.get(key);
-    if (entry) {
-      return entry.value;
-    }
-    return null;
-  }
-  getOrSet(key, fn) {
-    if (this.has(key)) {
-      return this.get(key);
-    } else {
-      let value = fn();
-      this.set(key, value);
-      (async() => {
-        try {
-          await value;
-        } catch (err) {
-          this.delete(key);
-        }
-      })();
-      return value;
-    }
-  }
-  delete(key) {
-    let entry = super.get(key);
-    if (entry) {
-      clearTimeout(entry.tid);
-      super.delete(key);
-    }
-  }
-  clear() {
-    for (let entry of this.values()) {
-      clearTimeout(entry.tid);
-    }
-    super.clear();
-  }
-};
-
-},{"timers":109}],10:[function(require,module,exports){
-const utils = require('./utils');
-const FORMATS = require('./formats');
-
-
-// Use these to help sort formats, higher index is better.
-const audioEncodingRanks = [
-  'mp4a',
-  'mp3',
-  'vorbis',
-  'aac',
-  'opus',
-  'flac',
-];
-const videoEncodingRanks = [
-  'mp4v',
-  'avc1',
-  'Sorenson H.283',
-  'MPEG-4 Visual',
-  'VP8',
-  'VP9',
-  'H.264',
-];
-
-const getVideoBitrate = format => format.bitrate || 0;
-const getVideoEncodingRank = format =>
-  videoEncodingRanks.findIndex(enc => format.codecs && format.codecs.includes(enc));
-const getAudioBitrate = format => format.audioBitrate || 0;
-const getAudioEncodingRank = format =>
-  audioEncodingRanks.findIndex(enc => format.codecs && format.codecs.includes(enc));
-
-
-/**
- * Sort formats by a list of functions.
- *
- * @param {Object} a
- * @param {Object} b
- * @param {Array.<Function>} sortBy
- * @returns {number}
- */
-const sortFormatsBy = (a, b, sortBy) => {
-  let res = 0;
-  for (let fn of sortBy) {
-    res = fn(b) - fn(a);
-    if (res !== 0) {
-      break;
-    }
-  }
-  return res;
-};
-
-
-const sortFormatsByVideo = (a, b) => sortFormatsBy(a, b, [
-  format => parseInt(format.qualityLabel),
-  getVideoBitrate,
-  getVideoEncodingRank,
-]);
-
-
-const sortFormatsByAudio = (a, b) => sortFormatsBy(a, b, [
-  getAudioBitrate,
-  getAudioEncodingRank,
-]);
-
-
-/**
- * Sort formats from highest quality to lowest.
- *
- * @param {Object} a
- * @param {Object} b
- * @returns {number}
- */
-exports.sortFormats = (a, b) => sortFormatsBy(a, b, [
-  // Formats with both video and audio are ranked highest.
-  format => +!!format.isHLS,
-  format => +!!format.isDashMPD,
-  format => +(format.contentLength > 0),
-  format => +(format.hasVideo && format.hasAudio),
-  format => +format.hasVideo,
-  format => parseInt(format.qualityLabel) || 0,
-  getVideoBitrate,
-  getAudioBitrate,
-  getVideoEncodingRank,
-  getAudioEncodingRank,
-]);
-
-
-/**
- * Choose a format depending on the given options.
- *
- * @param {Array.<Object>} formats
- * @param {Object} options
- * @returns {Object}
- * @throws {Error} when no format matches the filter/format rules
- */
-exports.chooseFormat = (formats, options) => {
-  if (typeof options.format === 'object') {
-    if (!options.format.url) {
-      throw Error('Invalid format given, did you use `ytdl.getInfo()`?');
-    }
-    return options.format;
-  }
-
-  if (options.filter) {
-    formats = exports.filterFormats(formats, options.filter);
-  }
-
-  // We currently only support HLS-Formats for livestreams
-  // So we (now) remove all non-HLS streams
-  if (formats.some(fmt => fmt.isHLS)) {
-    formats = formats.filter(fmt => fmt.isHLS || !fmt.isLive);
-  }
-
-  let format;
-  const quality = options.quality || 'highest';
-  switch (quality) {
-    case 'highest':
-      format = formats[0];
-      break;
-
-    case 'lowest':
-      format = formats[formats.length - 1];
-      break;
-
-    case 'highestaudio': {
-      formats = exports.filterFormats(formats, 'audio');
-      formats.sort(sortFormatsByAudio);
-      // Filter for only the best audio format
-      const bestAudioFormat = formats[0];
-      formats = formats.filter(f => sortFormatsByAudio(bestAudioFormat, f) === 0);
-      // Check for the worst video quality for the best audio quality and pick according
-      // This does not loose default sorting of video encoding and bitrate
-      const worstVideoQuality = formats.map(f => parseInt(f.qualityLabel) || 0).sort((a, b) => a - b)[0];
-      format = formats.find(f => (parseInt(f.qualityLabel) || 0) === worstVideoQuality);
-      break;
-    }
-
-    case 'lowestaudio':
-      formats = exports.filterFormats(formats, 'audio');
-      formats.sort(sortFormatsByAudio);
-      format = formats[formats.length - 1];
-      break;
-
-    case 'highestvideo': {
-      formats = exports.filterFormats(formats, 'video');
-      formats.sort(sortFormatsByVideo);
-      // Filter for only the best video format
-      const bestVideoFormat = formats[0];
-      formats = formats.filter(f => sortFormatsByVideo(bestVideoFormat, f) === 0);
-      // Check for the worst audio quality for the best video quality and pick according
-      // This does not loose default sorting of audio encoding and bitrate
-      const worstAudioQuality = formats.map(f => f.audioBitrate || 0).sort((a, b) => a - b)[0];
-      format = formats.find(f => (f.audioBitrate || 0) === worstAudioQuality);
-      break;
-    }
-
-    case 'lowestvideo':
-      formats = exports.filterFormats(formats, 'video');
-      formats.sort(sortFormatsByVideo);
-      format = formats[formats.length - 1];
-      break;
-
-    default:
-      format = getFormatByQuality(quality, formats);
-      break;
-  }
-
-  if (!format) {
-    throw Error(`No such format found: ${quality}`);
-  }
-  return format;
-};
-
-/**
- * Gets a format based on quality or array of quality's
- *
- * @param {string|[string]} quality
- * @param {[Object]} formats
- * @returns {Object}
- */
-const getFormatByQuality = (quality, formats) => {
-  let getFormat = itag => formats.find(format => `${format.itag}` === `${itag}`);
-  if (Array.isArray(quality)) {
-    return getFormat(quality.find(q => getFormat(q)));
-  } else {
-    return getFormat(quality);
-  }
-};
-
-
-/**
- * @param {Array.<Object>} formats
- * @param {Function} filter
- * @returns {Array.<Object>}
- */
-exports.filterFormats = (formats, filter) => {
-  let fn;
-  switch (filter) {
-    case 'videoandaudio':
-    case 'audioandvideo':
-      fn = format => format.hasVideo && format.hasAudio;
-      break;
-
-    case 'video':
-      fn = format => format.hasVideo;
-      break;
-
-    case 'videoonly':
-      fn = format => format.hasVideo && !format.hasAudio;
-      break;
-
-    case 'audio':
-      fn = format => format.hasAudio;
-      break;
-
-    case 'audioonly':
-      fn = format => !format.hasVideo && format.hasAudio;
-      break;
-
-    default:
-      if (typeof filter === 'function') {
-        fn = filter;
-      } else {
-        throw TypeError(`Given filter (${filter}) is not supported`);
-      }
-  }
-  return formats.filter(format => !!format.url && fn(format));
-};
-
-
-/**
- * @param {Object} format
- * @returns {Object}
- */
-exports.addFormatMeta = format => {
-  format = Object.assign({}, FORMATS[format.itag], format);
-  format.hasVideo = !!format.qualityLabel;
-  format.hasAudio = !!format.audioBitrate;
-  format.container = format.mimeType ?
-    format.mimeType.split(';')[0].split('/')[1] : null;
-  format.codecs = format.mimeType ?
-    utils.between(format.mimeType, 'codecs="', '"') : null;
-  format.videoCodec = format.hasVideo && format.codecs ?
-    format.codecs.split(', ')[0] : null;
-  format.audioCodec = format.hasAudio && format.codecs ?
-    format.codecs.split(', ').slice(-1)[0] : null;
-  format.isLive = /\bsource[/=]yt_live_broadcast\b/.test(format.url);
-  format.isHLS = /\/manifest\/hls_(variant|playlist)\//.test(format.url);
-  format.isDashMPD = /\/manifest\/dash\//.test(format.url);
-  return format;
-};
-
-},{"./formats":11,"./utils":17}],11:[function(require,module,exports){
-/**
- * http://en.wikipedia.org/wiki/YouTube#Quality_and_formats
- */
-module.exports = {
-
-  5: {
-    mimeType: 'video/flv; codecs="Sorenson H.283, mp3"',
-    qualityLabel: '240p',
-    bitrate: 250000,
-    audioBitrate: 64,
-  },
-
-  6: {
-    mimeType: 'video/flv; codecs="Sorenson H.263, mp3"',
-    qualityLabel: '270p',
-    bitrate: 800000,
-    audioBitrate: 64,
-  },
-
-  13: {
-    mimeType: 'video/3gp; codecs="MPEG-4 Visual, aac"',
-    qualityLabel: null,
-    bitrate: 500000,
-    audioBitrate: null,
-  },
-
-  17: {
-    mimeType: 'video/3gp; codecs="MPEG-4 Visual, aac"',
-    qualityLabel: '144p',
-    bitrate: 50000,
-    audioBitrate: 24,
-  },
-
-  18: {
-    mimeType: 'video/mp4; codecs="H.264, aac"',
-    qualityLabel: '360p',
-    bitrate: 500000,
-    audioBitrate: 96,
-  },
-
-  22: {
-    mimeType: 'video/mp4; codecs="H.264, aac"',
-    qualityLabel: '720p',
-    bitrate: 2000000,
-    audioBitrate: 192,
-  },
-
-  34: {
-    mimeType: 'video/flv; codecs="H.264, aac"',
-    qualityLabel: '360p',
-    bitrate: 500000,
-    audioBitrate: 128,
-  },
-
-  35: {
-    mimeType: 'video/flv; codecs="H.264, aac"',
-    qualityLabel: '480p',
-    bitrate: 800000,
-    audioBitrate: 128,
-  },
-
-  36: {
-    mimeType: 'video/3gp; codecs="MPEG-4 Visual, aac"',
-    qualityLabel: '240p',
-    bitrate: 175000,
-    audioBitrate: 32,
-  },
-
-  37: {
-    mimeType: 'video/mp4; codecs="H.264, aac"',
-    qualityLabel: '1080p',
-    bitrate: 3000000,
-    audioBitrate: 192,
-  },
-
-  38: {
-    mimeType: 'video/mp4; codecs="H.264, aac"',
-    qualityLabel: '3072p',
-    bitrate: 3500000,
-    audioBitrate: 192,
-  },
-
-  43: {
-    mimeType: 'video/webm; codecs="VP8, vorbis"',
-    qualityLabel: '360p',
-    bitrate: 500000,
-    audioBitrate: 128,
-  },
-
-  44: {
-    mimeType: 'video/webm; codecs="VP8, vorbis"',
-    qualityLabel: '480p',
-    bitrate: 1000000,
-    audioBitrate: 128,
-  },
-
-  45: {
-    mimeType: 'video/webm; codecs="VP8, vorbis"',
-    qualityLabel: '720p',
-    bitrate: 2000000,
-    audioBitrate: 192,
-  },
-
-  46: {
-    mimeType: 'audio/webm; codecs="vp8, vorbis"',
-    qualityLabel: '1080p',
-    bitrate: null,
-    audioBitrate: 192,
-  },
-
-  82: {
-    mimeType: 'video/mp4; codecs="H.264, aac"',
-    qualityLabel: '360p',
-    bitrate: 500000,
-    audioBitrate: 96,
-  },
-
-  83: {
-    mimeType: 'video/mp4; codecs="H.264, aac"',
-    qualityLabel: '240p',
-    bitrate: 500000,
-    audioBitrate: 96,
-  },
-
-  84: {
-    mimeType: 'video/mp4; codecs="H.264, aac"',
-    qualityLabel: '720p',
-    bitrate: 2000000,
-    audioBitrate: 192,
-  },
-
-  85: {
-    mimeType: 'video/mp4; codecs="H.264, aac"',
-    qualityLabel: '1080p',
-    bitrate: 3000000,
-    audioBitrate: 192,
-  },
-
-  91: {
-    mimeType: 'video/ts; codecs="H.264, aac"',
-    qualityLabel: '144p',
-    bitrate: 100000,
-    audioBitrate: 48,
-  },
-
-  92: {
-    mimeType: 'video/ts; codecs="H.264, aac"',
-    qualityLabel: '240p',
-    bitrate: 150000,
-    audioBitrate: 48,
-  },
-
-  93: {
-    mimeType: 'video/ts; codecs="H.264, aac"',
-    qualityLabel: '360p',
-    bitrate: 500000,
-    audioBitrate: 128,
-  },
-
-  94: {
-    mimeType: 'video/ts; codecs="H.264, aac"',
-    qualityLabel: '480p',
-    bitrate: 800000,
-    audioBitrate: 128,
-  },
-
-  95: {
-    mimeType: 'video/ts; codecs="H.264, aac"',
-    qualityLabel: '720p',
-    bitrate: 1500000,
-    audioBitrate: 256,
-  },
-
-  96: {
-    mimeType: 'video/ts; codecs="H.264, aac"',
-    qualityLabel: '1080p',
-    bitrate: 2500000,
-    audioBitrate: 256,
-  },
-
-  100: {
-    mimeType: 'audio/webm; codecs="VP8, vorbis"',
-    qualityLabel: '360p',
-    bitrate: null,
-    audioBitrate: 128,
-  },
-
-  101: {
-    mimeType: 'audio/webm; codecs="VP8, vorbis"',
-    qualityLabel: '360p',
-    bitrate: null,
-    audioBitrate: 192,
-  },
-
-  102: {
-    mimeType: 'audio/webm; codecs="VP8, vorbis"',
-    qualityLabel: '720p',
-    bitrate: null,
-    audioBitrate: 192,
-  },
-
-  120: {
-    mimeType: 'video/flv; codecs="H.264, aac"',
-    qualityLabel: '720p',
-    bitrate: 2000000,
-    audioBitrate: 128,
-  },
-
-  127: {
-    mimeType: 'audio/ts; codecs="aac"',
-    qualityLabel: null,
-    bitrate: null,
-    audioBitrate: 96,
-  },
-
-  128: {
-    mimeType: 'audio/ts; codecs="aac"',
-    qualityLabel: null,
-    bitrate: null,
-    audioBitrate: 96,
-  },
-
-  132: {
-    mimeType: 'video/ts; codecs="H.264, aac"',
-    qualityLabel: '240p',
-    bitrate: 150000,
-    audioBitrate: 48,
-  },
-
-  133: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '240p',
-    bitrate: 200000,
-    audioBitrate: null,
-  },
-
-  134: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '360p',
-    bitrate: 300000,
-    audioBitrate: null,
-  },
-
-  135: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '480p',
-    bitrate: 500000,
-    audioBitrate: null,
-  },
-
-  136: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '720p',
-    bitrate: 1000000,
-    audioBitrate: null,
-  },
-
-  137: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '1080p',
-    bitrate: 2500000,
-    audioBitrate: null,
-  },
-
-  138: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '4320p',
-    bitrate: 13500000,
-    audioBitrate: null,
-  },
-
-  139: {
-    mimeType: 'audio/mp4; codecs="aac"',
-    qualityLabel: null,
-    bitrate: null,
-    audioBitrate: 48,
-  },
-
-  140: {
-    mimeType: 'audio/m4a; codecs="aac"',
-    qualityLabel: null,
-    bitrate: null,
-    audioBitrate: 128,
-  },
-
-  141: {
-    mimeType: 'audio/mp4; codecs="aac"',
-    qualityLabel: null,
-    bitrate: null,
-    audioBitrate: 256,
-  },
-
-  151: {
-    mimeType: 'video/ts; codecs="H.264, aac"',
-    qualityLabel: '720p',
-    bitrate: 50000,
-    audioBitrate: 24,
-  },
-
-  160: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '144p',
-    bitrate: 100000,
-    audioBitrate: null,
-  },
-
-  171: {
-    mimeType: 'audio/webm; codecs="vorbis"',
-    qualityLabel: null,
-    bitrate: null,
-    audioBitrate: 128,
-  },
-
-  172: {
-    mimeType: 'audio/webm; codecs="vorbis"',
-    qualityLabel: null,
-    bitrate: null,
-    audioBitrate: 192,
-  },
-
-  242: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '240p',
-    bitrate: 100000,
-    audioBitrate: null,
-  },
-
-  243: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '360p',
-    bitrate: 250000,
-    audioBitrate: null,
-  },
-
-  244: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '480p',
-    bitrate: 500000,
-    audioBitrate: null,
-  },
-
-  247: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '720p',
-    bitrate: 700000,
-    audioBitrate: null,
-  },
-
-  248: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '1080p',
-    bitrate: 1500000,
-    audioBitrate: null,
-  },
-
-  249: {
-    mimeType: 'audio/webm; codecs="opus"',
-    qualityLabel: null,
-    bitrate: null,
-    audioBitrate: 48,
-  },
-
-  250: {
-    mimeType: 'audio/webm; codecs="opus"',
-    qualityLabel: null,
-    bitrate: null,
-    audioBitrate: 64,
-  },
-
-  251: {
-    mimeType: 'audio/webm; codecs="opus"',
-    qualityLabel: null,
-    bitrate: null,
-    audioBitrate: 160,
-  },
-
-  264: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '1440p',
-    bitrate: 4000000,
-    audioBitrate: null,
-  },
-
-  266: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '2160p',
-    bitrate: 12500000,
-    audioBitrate: null,
-  },
-
-  271: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '1440p',
-    bitrate: 9000000,
-    audioBitrate: null,
-  },
-
-  272: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '4320p',
-    bitrate: 20000000,
-    audioBitrate: null,
-  },
-
-  278: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '144p 30fps',
-    bitrate: 80000,
-    audioBitrate: null,
-  },
-
-  298: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '720p',
-    bitrate: 3000000,
-    audioBitrate: null,
-  },
-
-  299: {
-    mimeType: 'video/mp4; codecs="H.264"',
-    qualityLabel: '1080p',
-    bitrate: 5500000,
-    audioBitrate: null,
-  },
-
-  300: {
-    mimeType: 'video/ts; codecs="H.264, aac"',
-    qualityLabel: '720p',
-    bitrate: 1318000,
-    audioBitrate: 48,
-  },
-
-  302: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '720p HFR',
-    bitrate: 2500000,
-    audioBitrate: null,
-  },
-
-  303: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '1080p HFR',
-    bitrate: 5000000,
-    audioBitrate: null,
-  },
-
-  308: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '1440p HFR',
-    bitrate: 10000000,
-    audioBitrate: null,
-  },
-
-  313: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '2160p',
-    bitrate: 13000000,
-    audioBitrate: null,
-  },
-
-  315: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '2160p HFR',
-    bitrate: 20000000,
-    audioBitrate: null,
-  },
-
-  330: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '144p HDR, HFR',
-    bitrate: 80000,
-    audioBitrate: null,
-  },
-
-  331: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '240p HDR, HFR',
-    bitrate: 100000,
-    audioBitrate: null,
-  },
-
-  332: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '360p HDR, HFR',
-    bitrate: 250000,
-    audioBitrate: null,
-  },
-
-  333: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '240p HDR, HFR',
-    bitrate: 500000,
-    audioBitrate: null,
-  },
-
-  334: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '720p HDR, HFR',
-    bitrate: 1000000,
-    audioBitrate: null,
-  },
-
-  335: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '1080p HDR, HFR',
-    bitrate: 1500000,
-    audioBitrate: null,
-  },
-
-  336: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '1440p HDR, HFR',
-    bitrate: 5000000,
-    audioBitrate: null,
-  },
-
-  337: {
-    mimeType: 'video/webm; codecs="VP9"',
-    qualityLabel: '2160p HDR, HFR',
-    bitrate: 12000000,
-    audioBitrate: null,
-  },
-
-};
-
-},{}],12:[function(require,module,exports){
-(function (setImmediate){(function (){
-const PassThrough = require('stream').PassThrough;
-const getInfo = require('./info');
-const utils = require('./utils');
-const formatUtils = require('./format-utils');
-const urlUtils = require('./url-utils');
-const sig = require('./sig');
-const miniget = require('miniget');
-const m3u8stream = require('m3u8stream');
-const { parseTimestamp } = require('m3u8stream');
-
-
-/**
- * @param {string} link
- * @param {!Object} options
- * @returns {ReadableStream}
- */
-const ytdl = (link, options) => {
-  const stream = createStream(options);
-  ytdl.getInfo(link, options).then(info => {
-    downloadFromInfoCallback(stream, info, options);
-  }, stream.emit.bind(stream, 'error'));
-  return stream;
-};
-module.exports = ytdl;
-
-ytdl.getBasicInfo = getInfo.getBasicInfo;
-ytdl.getInfo = getInfo.getInfo;
-ytdl.chooseFormat = formatUtils.chooseFormat;
-ytdl.filterFormats = formatUtils.filterFormats;
-ytdl.validateID = urlUtils.validateID;
-ytdl.validateURL = urlUtils.validateURL;
-ytdl.getURLVideoID = urlUtils.getURLVideoID;
-ytdl.getVideoID = urlUtils.getVideoID;
-ytdl.cache = {
-  sig: sig.cache,
-  info: getInfo.cache,
-  watch: getInfo.watchPageCache,
-  cookie: getInfo.cookieCache,
-};
-ytdl.version = require('../package.json').version;
-
-
-const createStream = options => {
-  const stream = new PassThrough({
-    highWaterMark: (options && options.highWaterMark) || 1024 * 512,
-  });
-  stream._destroy = () => { stream.destroyed = true; };
-  return stream;
-};
-
-
-const pipeAndSetEvents = (req, stream, end) => {
-  // Forward events from the request to the stream.
-  [
-    'abort', 'request', 'response', 'error', 'redirect', 'retry', 'reconnect',
-  ].forEach(event => {
-    req.prependListener(event, stream.emit.bind(stream, event));
-  });
-  req.pipe(stream, { end });
-};
-
-
-/**
- * Chooses a format to download.
- *
- * @param {stream.Readable} stream
- * @param {Object} info
- * @param {Object} options
- */
-const downloadFromInfoCallback = (stream, info, options) => {
-  options = options || {};
-
-  let err = utils.playError(info.player_response, ['UNPLAYABLE', 'LIVE_STREAM_OFFLINE', 'LOGIN_REQUIRED']);
-  if (err) {
-    stream.emit('error', err);
-    return;
-  }
-
-  if (!info.formats.length) {
-    stream.emit('error', Error('This video is unavailable'));
-    return;
-  }
-
-  let format;
-  try {
-    format = formatUtils.chooseFormat(info.formats, options);
-  } catch (e) {
-    stream.emit('error', e);
-    return;
-  }
-  stream.emit('info', info, format);
-  if (stream.destroyed) { return; }
-
-  let contentLength, downloaded = 0;
-  const ondata = chunk => {
-    downloaded += chunk.length;
-    stream.emit('progress', chunk.length, downloaded, contentLength);
-  };
-
-  // Download the file in chunks, in this case the default is 10MB,
-  // anything over this will cause youtube to throttle the download
-  const dlChunkSize = options.dlChunkSize || 1024 * 1024 * 10;
-  let req;
-  let shouldEnd = true;
-
-  if (format.isHLS || format.isDashMPD) {
-    req = m3u8stream(format.url, {
-      chunkReadahead: +info.live_chunk_readahead,
-      begin: options.begin || (format.isLive && Date.now()),
-      liveBuffer: options.liveBuffer,
-      requestOptions: options.requestOptions,
-      parser: format.isDashMPD ? 'dash-mpd' : 'm3u8',
-      id: format.itag,
-    });
-
-    req.on('progress', (segment, totalSegments) => {
-      stream.emit('progress', segment.size, segment.num, totalSegments);
-    });
-    pipeAndSetEvents(req, stream, shouldEnd);
-  } else {
-    const requestOptions = Object.assign({}, options.requestOptions, {
-      maxReconnects: 6,
-      maxRetries: 3,
-      backoff: { inc: 500, max: 10000 },
-    });
-
-    let shouldBeChunked = dlChunkSize !== 0 && (!format.hasAudio || !format.hasVideo);
-
-    if (shouldBeChunked) {
-      let start = (options.range && options.range.start) || 0;
-      let end = start + dlChunkSize;
-      const rangeEnd = options.range && options.range.end;
-
-      contentLength = options.range ?
-        (rangeEnd ? rangeEnd + 1 : parseInt(format.contentLength)) - start :
-        parseInt(format.contentLength);
-
-      const getNextChunk = () => {
-        if (!rangeEnd && end >= contentLength) end = 0;
-        if (rangeEnd && end > rangeEnd) end = rangeEnd;
-        shouldEnd = !end || end === rangeEnd;
-
-        requestOptions.headers = Object.assign({}, requestOptions.headers, {
-          Range: `bytes=${start}-${end || ''}`,
-        });
-
-        req = miniget(format.url, requestOptions);
-        req.on('data', ondata);
-        req.on('end', () => {
-          if (stream.destroyed) { return; }
-          if (end && end !== rangeEnd) {
-            start = end + 1;
-            end += dlChunkSize;
-            getNextChunk();
-          }
-        });
-        pipeAndSetEvents(req, stream, shouldEnd);
-      };
-      getNextChunk();
-    } else {
-      // Audio only and video only formats don't support begin
-      if (options.begin) {
-        format.url += `&begin=${parseTimestamp(options.begin)}`;
-      }
-      if (options.range && (options.range.start || options.range.end)) {
-        requestOptions.headers = Object.assign({}, requestOptions.headers, {
-          Range: `bytes=${options.range.start || '0'}-${options.range.end || ''}`,
-        });
-      }
-      req = miniget(format.url, requestOptions);
-      req.on('response', res => {
-        if (stream.destroyed) { return; }
-        contentLength = contentLength || parseInt(res.headers['content-length']);
-      });
-      req.on('data', ondata);
-      pipeAndSetEvents(req, stream, shouldEnd);
-    }
-  }
-
-  stream._destroy = () => {
-    stream.destroyed = true;
-    req.destroy();
-    req.end();
-  };
-};
-
-
-/**
- * Can be used to download video after its `info` is gotten through
- * `ytdl.getInfo()`. In case the user might want to look at the
- * `info` object before deciding to download.
- *
- * @param {Object} info
- * @param {!Object} options
- * @returns {ReadableStream}
- */
-ytdl.downloadFromInfo = (info, options) => {
-  const stream = createStream(options);
-  if (!info.full) {
-    throw Error('Cannot use `ytdl.downloadFromInfo()` when called ' +
-      'with info from `ytdl.getBasicInfo()`');
-  }
-  setImmediate(() => {
-    downloadFromInfoCallback(stream, info, options);
-  });
-  return stream;
-};
-
-}).call(this)}).call(this,require("timers").setImmediate)
-},{"../package.json":18,"./format-utils":10,"./info":14,"./sig":15,"./url-utils":16,"./utils":17,"m3u8stream":3,"miniget":7,"stream":72,"timers":109}],13:[function(require,module,exports){
-const utils = require('./utils');
-const qs = require('querystring');
-const { parseTimestamp } = require('m3u8stream');
-
-
-const BASE_URL = 'https://www.youtube.com/watch?v=';
-const TITLE_TO_CATEGORY = {
-  song: { name: 'Music', url: 'https://music.youtube.com/' },
-};
-
-const getText = obj => obj ? obj.runs ? obj.runs[0].text : obj.simpleText : null;
-
-
-/**
- * Get video media.
- *
- * @param {Object} info
- * @returns {Object}
- */
-exports.getMedia = info => {
-  let media = {};
-  let results = [];
-  try {
-    results = info.response.contents.twoColumnWatchNextResults.results.results.contents;
-  } catch (err) {
-    // Do nothing
-  }
-
-  let result = results.find(v => v.videoSecondaryInfoRenderer);
-  if (!result) { return {}; }
-
-  try {
-    let metadataRows =
-      (result.metadataRowContainer || result.videoSecondaryInfoRenderer.metadataRowContainer)
-        .metadataRowContainerRenderer.rows;
-    for (let row of metadataRows) {
-      if (row.metadataRowRenderer) {
-        let title = getText(row.metadataRowRenderer.title).toLowerCase();
-        let contents = row.metadataRowRenderer.contents[0];
-        media[title] = getText(contents);
-        let runs = contents.runs;
-        if (runs && runs[0].navigationEndpoint) {
-          media[`${title}_url`] = new URL(
-            runs[0].navigationEndpoint.commandMetadata.webCommandMetadata.url, BASE_URL).toString();
-        }
-        if (title in TITLE_TO_CATEGORY) {
-          media.category = TITLE_TO_CATEGORY[title].name;
-          media.category_url = TITLE_TO_CATEGORY[title].url;
-        }
-      } else if (row.richMetadataRowRenderer) {
-        let contents = row.richMetadataRowRenderer.contents;
-        let boxArt = contents
-          .filter(meta => meta.richMetadataRenderer.style === 'RICH_METADATA_RENDERER_STYLE_BOX_ART');
-        for (let { richMetadataRenderer } of boxArt) {
-          let meta = richMetadataRenderer;
-          media.year = getText(meta.subtitle);
-          let type = getText(meta.callToAction).split(' ')[1];
-          media[type] = getText(meta.title);
-          media[`${type}_url`] = new URL(
-            meta.endpoint.commandMetadata.webCommandMetadata.url, BASE_URL).toString();
-          media.thumbnails = meta.thumbnail.thumbnails;
-        }
-        let topic = contents
-          .filter(meta => meta.richMetadataRenderer.style === 'RICH_METADATA_RENDERER_STYLE_TOPIC');
-        for (let { richMetadataRenderer } of topic) {
-          let meta = richMetadataRenderer;
-          media.category = getText(meta.title);
-          media.category_url = new URL(
-            meta.endpoint.commandMetadata.webCommandMetadata.url, BASE_URL).toString();
-        }
-      }
-    }
-  } catch (err) {
-    // Do nothing.
-  }
-
-  return media;
-};
-
-
-const isVerified = badges => !!(badges && badges.find(b => b.metadataBadgeRenderer.tooltip === 'Verified'));
-
-
-/**
- * Get video author.
- *
- * @param {Object} info
- * @returns {Object}
- */
-exports.getAuthor = info => {
-  let channelId, thumbnails = [], subscriberCount, verified = false;
-  try {
-    let results = info.response.contents.twoColumnWatchNextResults.results.results.contents;
-    let v = results.find(v2 =>
-      v2.videoSecondaryInfoRenderer &&
-      v2.videoSecondaryInfoRenderer.owner &&
-      v2.videoSecondaryInfoRenderer.owner.videoOwnerRenderer);
-    let videoOwnerRenderer = v.videoSecondaryInfoRenderer.owner.videoOwnerRenderer;
-    channelId = videoOwnerRenderer.navigationEndpoint.browseEndpoint.browseId;
-    thumbnails = videoOwnerRenderer.thumbnail.thumbnails.map(thumbnail => {
-      thumbnail.url = new URL(thumbnail.url, BASE_URL).toString();
-      return thumbnail;
-    });
-    subscriberCount = utils.parseAbbreviatedNumber(getText(videoOwnerRenderer.subscriberCountText));
-    verified = isVerified(videoOwnerRenderer.badges);
-  } catch (err) {
-    // Do nothing.
-  }
-  try {
-    let videoDetails = info.player_response.microformat && info.player_response.microformat.playerMicroformatRenderer;
-    let id = (videoDetails && videoDetails.channelId) || channelId || info.player_response.videoDetails.channelId;
-    let author = {
-      id: id,
-      name: videoDetails ? videoDetails.ownerChannelName : info.player_response.videoDetails.author,
-      user: videoDetails ? videoDetails.ownerProfileUrl.split('/').slice(-1)[0] : null,
-      channel_url: `https://www.youtube.com/channel/${id}`,
-      external_channel_url: videoDetails ? `https://www.youtube.com/channel/${videoDetails.externalChannelId}` : '',
-      user_url: videoDetails ? new URL(videoDetails.ownerProfileUrl, BASE_URL).toString() : '',
-      thumbnails,
-      verified,
-      subscriber_count: subscriberCount,
-    };
-    if (thumbnails.length) {
-      utils.deprecate(author, 'avatar', author.thumbnails[0].url, 'author.avatar', 'author.thumbnails[0].url');
-    }
-    return author;
-  } catch (err) {
-    return {};
-  }
-};
-
-const parseRelatedVideo = (details, rvsParams) => {
-  if (!details) return;
-  try {
-    let viewCount = getText(details.viewCountText);
-    let shortViewCount = getText(details.shortViewCountText);
-    let rvsDetails = rvsParams.find(elem => elem.id === details.videoId);
-    if (!/^\d/.test(shortViewCount)) {
-      shortViewCount = (rvsDetails && rvsDetails.short_view_count_text) || '';
-    }
-    viewCount = (/^\d/.test(viewCount) ? viewCount : shortViewCount).split(' ')[0];
-    let browseEndpoint = details.shortBylineText.runs[0].navigationEndpoint.browseEndpoint;
-    let channelId = browseEndpoint.browseId;
-    let name = getText(details.shortBylineText);
-    let user = (browseEndpoint.canonicalBaseUrl || '').split('/').slice(-1)[0];
-    let video = {
-      id: details.videoId,
-      title: getText(details.title),
-      published: getText(details.publishedTimeText),
-      author: {
-        id: channelId,
-        name,
-        user,
-        channel_url: `https://www.youtube.com/channel/${channelId}`,
-        user_url: `https://www.youtube.com/user/${user}`,
-        thumbnails: details.channelThumbnail.thumbnails.map(thumbnail => {
-          thumbnail.url = new URL(thumbnail.url, BASE_URL).toString();
-          return thumbnail;
-        }),
-        verified: isVerified(details.ownerBadges),
-
-        [Symbol.toPrimitive]() {
-          console.warn(`\`relatedVideo.author\` will be removed in a near future release, ` +
-            `use \`relatedVideo.author.name\` instead.`);
-          return video.author.name;
-        },
-
-      },
-      short_view_count_text: shortViewCount.split(' ')[0],
-      view_count: viewCount.replace(/,/g, ''),
-      length_seconds: details.lengthText ?
-        Math.floor(parseTimestamp(getText(details.lengthText)) / 1000) :
-        rvsParams && `${rvsParams.length_seconds}`,
-      thumbnails: details.thumbnail.thumbnails,
-      richThumbnails:
-        details.richThumbnail ?
-          details.richThumbnail.movingThumbnailRenderer.movingThumbnailDetails.thumbnails : [],
-      isLive: !!(details.badges && details.badges.find(b => b.metadataBadgeRenderer.label === 'LIVE NOW')),
-    };
-
-    utils.deprecate(video, 'author_thumbnail', video.author.thumbnails[0].url,
-      'relatedVideo.author_thumbnail', 'relatedVideo.author.thumbnails[0].url');
-    utils.deprecate(video, 'ucid', video.author.id, 'relatedVideo.ucid', 'relatedVideo.author.id');
-    utils.deprecate(video, 'video_thumbnail', video.thumbnails[0].url,
-      'relatedVideo.video_thumbnail', 'relatedVideo.thumbnails[0].url');
-    return video;
-  } catch (err) {
-    // Skip.
-  }
-};
-
-/**
- * Get related videos.
- *
- * @param {Object} info
- * @returns {Array.<Object>}
- */
-exports.getRelatedVideos = info => {
-  let rvsParams = [], secondaryResults = [];
-  try {
-    rvsParams = info.response.webWatchNextResponseExtensionData.relatedVideoArgs.split(',').map(e => qs.parse(e));
-  } catch (err) {
-    // Do nothing.
-  }
-  try {
-    secondaryResults = info.response.contents.twoColumnWatchNextResults.secondaryResults.secondaryResults.results;
-  } catch (err) {
-    return [];
-  }
-  let videos = [];
-  for (let result of secondaryResults || []) {
-    let details = result.compactVideoRenderer;
-    if (details) {
-      let video = parseRelatedVideo(details, rvsParams);
-      if (video) videos.push(video);
-    } else {
-      let autoplay = result.compactAutoplayRenderer || result.itemSectionRenderer;
-      if (!autoplay || !Array.isArray(autoplay.contents)) continue;
-      for (let content of autoplay.contents) {
-        let video = parseRelatedVideo(content.compactVideoRenderer, rvsParams);
-        if (video) videos.push(video);
-      }
-    }
-  }
-  return videos;
-};
-
-/**
- * Get like count.
- *
- * @param {Object} info
- * @returns {number}
- */
-exports.getLikes = info => {
-  try {
-    let contents = info.response.contents.twoColumnWatchNextResults.results.results.contents;
-    let video = contents.find(r => r.videoPrimaryInfoRenderer);
-    let buttons = video.videoPrimaryInfoRenderer.videoActions.menuRenderer.topLevelButtons;
-    let like = buttons.find(b => b.toggleButtonRenderer &&
-      b.toggleButtonRenderer.defaultIcon.iconType === 'LIKE');
-    return parseInt(like.toggleButtonRenderer.defaultText.accessibility.accessibilityData.label.replace(/\D+/g, ''));
-  } catch (err) {
-    return null;
-  }
-};
-
-/**
- * Get dislike count.
- *
- * @param {Object} info
- * @returns {number}
- */
-exports.getDislikes = info => {
-  try {
-    let contents = info.response.contents.twoColumnWatchNextResults.results.results.contents;
-    let video = contents.find(r => r.videoPrimaryInfoRenderer);
-    let buttons = video.videoPrimaryInfoRenderer.videoActions.menuRenderer.topLevelButtons;
-    let dislike = buttons.find(b => b.toggleButtonRenderer &&
-      b.toggleButtonRenderer.defaultIcon.iconType === 'DISLIKE');
-    return parseInt(dislike.toggleButtonRenderer.defaultText.accessibility.accessibilityData.label.replace(/\D+/g, ''));
-  } catch (err) {
-    return null;
-  }
-};
-
-/**
- * Cleans up a few fields on `videoDetails`.
- *
- * @param {Object} videoDetails
- * @param {Object} info
- * @returns {Object}
- */
-exports.cleanVideoDetails = (videoDetails, info) => {
-  videoDetails.thumbnails = videoDetails.thumbnail.thumbnails;
-  delete videoDetails.thumbnail;
-  utils.deprecate(videoDetails, 'thumbnail', { thumbnails: videoDetails.thumbnails },
-    'videoDetails.thumbnail.thumbnails', 'videoDetails.thumbnails');
-  videoDetails.description = videoDetails.shortDescription || getText(videoDetails.description);
-  delete videoDetails.shortDescription;
-  utils.deprecate(videoDetails, 'shortDescription', videoDetails.description,
-    'videoDetails.shortDescription', 'videoDetails.description');
-
-  // Use more reliable `lengthSeconds` from `playerMicroformatRenderer`.
-  videoDetails.lengthSeconds =
-    (info.player_response.microformat &&
-    info.player_response.microformat.playerMicroformatRenderer.lengthSeconds) ||
-    info.player_response.videoDetails.lengthSeconds;
-  return videoDetails;
-};
-
-/**
- * Get storyboards info.
- *
- * @param {Object} info
- * @returns {Array.<Object>}
- */
-exports.getStoryboards = info => {
-  const parts = info.player_response.storyboards &&
-    info.player_response.storyboards.playerStoryboardSpecRenderer &&
-    info.player_response.storyboards.playerStoryboardSpecRenderer.spec &&
-    info.player_response.storyboards.playerStoryboardSpecRenderer.spec.split('|');
-
-  if (!parts) return [];
-
-  const url = new URL(parts.shift());
-
-  return parts.map((part, i) => {
-    let [
-      thumbnailWidth,
-      thumbnailHeight,
-      thumbnailCount,
-      columns,
-      rows,
-      interval,
-      nameReplacement,
-      sigh,
-    ] = part.split('#');
-
-    url.searchParams.set('sigh', sigh);
-
-    thumbnailCount = parseInt(thumbnailCount, 10);
-    columns = parseInt(columns, 10);
-    rows = parseInt(rows, 10);
-
-    const storyboardCount = Math.ceil(thumbnailCount / (columns * rows));
-
-    return {
-      templateUrl: url.toString().replace('$L', i).replace('$N', nameReplacement),
-      thumbnailWidth: parseInt(thumbnailWidth, 10),
-      thumbnailHeight: parseInt(thumbnailHeight, 10),
-      thumbnailCount,
-      interval: parseInt(interval, 10),
-      columns,
-      rows,
-      storyboardCount,
-    };
-  });
-};
-
-/**
- * Get chapters info.
- *
- * @param {Object} info
- * @returns {Array.<Object>}
- */
-exports.getChapters = info => {
-  const playerOverlayRenderer = info.response &&
-    info.response.playerOverlays &&
-    info.response.playerOverlays.playerOverlayRenderer;
-  const playerBar = playerOverlayRenderer &&
-    playerOverlayRenderer.decoratedPlayerBarRenderer &&
-    playerOverlayRenderer.decoratedPlayerBarRenderer.decoratedPlayerBarRenderer &&
-    playerOverlayRenderer.decoratedPlayerBarRenderer.decoratedPlayerBarRenderer.playerBar;
-  const markersMap = playerBar &&
-    playerBar.multiMarkersPlayerBarRenderer &&
-    playerBar.multiMarkersPlayerBarRenderer.markersMap;
-  const marker = Array.isArray(markersMap) && markersMap.find(m => m.value && Array.isArray(m.value.chapters));
-  if (!marker) return [];
-  const chapters = marker.value.chapters;
-
-  return chapters.map(chapter => ({
-    title: getText(chapter.chapterRenderer.title),
-    start_time: chapter.chapterRenderer.timeRangeStartMillis / 1000,
-  }));
-};
-
-},{"./utils":17,"m3u8stream":3,"querystring":69}],14:[function(require,module,exports){
-const querystring = require('querystring');
-const sax = require('sax');
-const miniget = require('miniget');
-const utils = require('./utils');
-// Forces Node JS version of setTimeout for Electron based applications
-const { setTimeout } = require('timers');
-const formatUtils = require('./format-utils');
-const urlUtils = require('./url-utils');
-const extras = require('./info-extras');
-const sig = require('./sig');
-const Cache = require('./cache');
-
-
-const BASE_URL = 'https://www.youtube.com/watch?v=';
-
-
-// Cached for storing basic/full info.
-exports.cache = new Cache();
-exports.cookieCache = new Cache(1000 * 60 * 60 * 24);
-exports.watchPageCache = new Cache();
-// Cache for cver used in getVideoInfoPage
-let cver = '2.20210622.10.00';
-
-
-// Special error class used to determine if an error is unrecoverable,
-// as in, ytdl-core should not try again to fetch the video metadata.
-// In this case, the video is usually unavailable in some way.
-class UnrecoverableError extends Error {}
-
-
-// List of URLs that show up in `notice_url` for age restricted videos.
-const AGE_RESTRICTED_URLS = [
-  'support.google.com/youtube/?p=age_restrictions',
-  'youtube.com/t/community_guidelines',
-];
-
-
-/**
- * Gets info from a video without getting additional formats.
- *
- * @param {string} id
- * @param {Object} options
- * @returns {Promise<Object>}
-*/
-exports.getBasicInfo = async(id, options) => {
-  const retryOptions = Object.assign({}, miniget.defaultOptions, options.requestOptions);
-  options.requestOptions = Object.assign({}, options.requestOptions, {});
-  options.requestOptions.headers = Object.assign({},
-    {
-      // eslint-disable-next-line max-len
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.101 Safari/537.36',
-    }, options.requestOptions.headers);
-  const validate = info => {
-    let playErr = utils.playError(info.player_response, ['ERROR'], UnrecoverableError);
-    let privateErr = privateVideoError(info.player_response);
-    if (playErr || privateErr) {
-      throw playErr || privateErr;
-    }
-    return info && info.player_response && (
-      info.player_response.streamingData || isRental(info.player_response) || isNotYetBroadcasted(info.player_response)
-    );
-  };
-  let info = await pipeline([id, options], validate, retryOptions, [
-    getWatchHTMLPage,
-    getWatchJSONPage,
-    getVideoInfoPage,
-  ]);
-
-  Object.assign(info, {
-    formats: parseFormats(info.player_response),
-    related_videos: extras.getRelatedVideos(info),
-  });
-
-  // Add additional properties to info.
-  const media = extras.getMedia(info);
-  const additional = {
-    author: extras.getAuthor(info),
-    media,
-    likes: extras.getLikes(info),
-    dislikes: extras.getDislikes(info),
-    age_restricted: !!(media && media.notice_url && AGE_RESTRICTED_URLS.some(url => media.notice_url.includes(url))),
-
-    // Give the standard link to the video.
-    video_url: BASE_URL + id,
-    storyboards: extras.getStoryboards(info),
-    chapters: extras.getChapters(info),
-  };
-
-  info.videoDetails = extras.cleanVideoDetails(Object.assign({},
-    info.player_response && info.player_response.microformat &&
-    info.player_response.microformat.playerMicroformatRenderer,
-    info.player_response && info.player_response.videoDetails, additional), info);
-
-  return info;
-};
-
-const privateVideoError = player_response => {
-  let playability = player_response && player_response.playabilityStatus;
-  if (playability && playability.status === 'LOGIN_REQUIRED' && playability.messages &&
-    playability.messages.filter(m => /This is a private video/.test(m)).length) {
-    return new UnrecoverableError(playability.reason || (playability.messages && playability.messages[0]));
-  } else {
-    return null;
-  }
-};
-
-
-const isRental = player_response => {
-  let playability = player_response.playabilityStatus;
-  return playability && playability.status === 'UNPLAYABLE' &&
-    playability.errorScreen && playability.errorScreen.playerLegacyDesktopYpcOfferRenderer;
-};
-
-
-const isNotYetBroadcasted = player_response => {
-  let playability = player_response.playabilityStatus;
-  return playability && playability.status === 'LIVE_STREAM_OFFLINE';
-};
-
-
-const getWatchHTMLURL = (id, options) => `${BASE_URL + id}&hl=${options.lang || 'en'}`;
-const getWatchHTMLPageBody = (id, options) => {
-  const url = getWatchHTMLURL(id, options);
-  return exports.watchPageCache.getOrSet(url, () => utils.exposedMiniget(url, options).text());
-};
-
-
-const EMBED_URL = 'https://www.youtube.com/embed/';
-const getEmbedPageBody = (id, options) => {
-  const embedUrl = `${EMBED_URL + id}?hl=${options.lang || 'en'}`;
-  return utils.exposedMiniget(embedUrl, options).text();
-};
-
-
-const getHTML5player = body => {
-  let html5playerRes =
-    /<script\s+src="([^"]+)"(?:\s+type="text\/javascript")?\s+name="player_ias\/base"\s*>|"jsUrl":"([^"]+)"/
-      .exec(body);
-  return html5playerRes ? html5playerRes[1] || html5playerRes[2] : null;
-};
-
-
-const getIdentityToken = (id, options, key, throwIfNotFound) =>
-  exports.cookieCache.getOrSet(key, async() => {
-    let page = await getWatchHTMLPageBody(id, options);
-    let match = page.match(/(["'])ID_TOKEN\1[:,]\s?"([^"]+)"/);
-    if (!match && throwIfNotFound) {
-      throw new UnrecoverableError('Cookie header used in request, but unable to find YouTube identity token');
-    }
-    return match && match[2];
-  });
-
-
-/**
- * Goes through each endpoint in the pipeline, retrying on failure if the error is recoverable.
- * If unable to succeed with one endpoint, moves onto the next one.
- *
- * @param {Array.<Object>} args
- * @param {Function} validate
- * @param {Object} retryOptions
- * @param {Array.<Function>} endpoints
- * @returns {[Object, Object, Object]}
- */
-const pipeline = async(args, validate, retryOptions, endpoints) => {
-  let info;
-  for (let func of endpoints) {
-    try {
-      const newInfo = await retryFunc(func, args.concat([info]), retryOptions);
-      if (newInfo.player_response) {
-        newInfo.player_response.videoDetails = assign(
-          info && info.player_response && info.player_response.videoDetails,
-          newInfo.player_response.videoDetails);
-        newInfo.player_response = assign(info && info.player_response, newInfo.player_response);
-      }
-      info = assign(info, newInfo);
-      if (validate(info, false)) {
-        break;
-      }
-    } catch (err) {
-      if (err instanceof UnrecoverableError || func === endpoints[endpoints.length - 1]) {
-        throw err;
-      }
-      // Unable to find video metadata... so try next endpoint.
-    }
-  }
-  return info;
-};
-
-
-/**
- * Like Object.assign(), but ignores `null` and `undefined` from `source`.
- *
- * @param {Object} target
- * @param {Object} source
- * @returns {Object}
- */
-const assign = (target, source) => {
-  if (!target || !source) { return target || source; }
-  for (let [key, value] of Object.entries(source)) {
-    if (value !== null && value !== undefined) {
-      target[key] = value;
-    }
-  }
-  return target;
-};
-
-
-/**
- * Given a function, calls it with `args` until it's successful,
- * or until it encounters an unrecoverable error.
- * Currently, any error from miniget is considered unrecoverable. Errors such as
- * too many redirects, invalid URL, status code 404, status code 502.
- *
- * @param {Function} func
- * @param {Array.<Object>} args
- * @param {Object} options
- * @param {number} options.maxRetries
- * @param {Object} options.backoff
- * @param {number} options.backoff.inc
- */
-const retryFunc = async(func, args, options) => {
-  let currentTry = 0, result;
-  while (currentTry <= options.maxRetries) {
-    try {
-      result = await func(...args);
-      break;
-    } catch (err) {
-      if (err instanceof UnrecoverableError ||
-        (err instanceof miniget.MinigetError && err.statusCode < 500) || currentTry >= options.maxRetries) {
-        throw err;
-      }
-      let wait = Math.min(++currentTry * options.backoff.inc, options.backoff.max);
-      await new Promise(resolve => setTimeout(resolve, wait));
-    }
-  }
-  return result;
-};
-
-
-const jsonClosingChars = /^[)\]}'\s]+/;
-const parseJSON = (source, varName, json) => {
-  if (!json || typeof json === 'object') {
-    return json;
-  } else {
-    try {
-      json = json.replace(jsonClosingChars, '');
-      return JSON.parse(json);
-    } catch (err) {
-      throw Error(`Error parsing ${varName} in ${source}: ${err.message}`);
-    }
-  }
-};
-
-
-const findJSON = (source, varName, body, left, right, prependJSON) => {
-  let jsonStr = utils.between(body, left, right);
-  if (!jsonStr) {
-    throw Error(`Could not find ${varName} in ${source}`);
-  }
-  return parseJSON(source, varName, utils.cutAfterJSON(`${prependJSON}${jsonStr}`));
-};
-
-
-const findPlayerResponse = (source, info) => {
-  const player_response = info && (
-    (info.args && info.args.player_response) ||
-    info.player_response || info.playerResponse || info.embedded_player_response);
-  return parseJSON(source, 'player_response', player_response);
-};
-
-
-const getWatchJSONURL = (id, options) => `${getWatchHTMLURL(id, options)}&pbj=1`;
-const getWatchJSONPage = async(id, options) => {
-  const reqOptions = Object.assign({ headers: {} }, options.requestOptions);
-  let cookie = reqOptions.headers.Cookie || reqOptions.headers.cookie;
-  reqOptions.headers = Object.assign({
-    'x-youtube-client-name': '1',
-    'x-youtube-client-version': cver,
-    'x-youtube-identity-token': exports.cookieCache.get(cookie || 'browser') || '',
-  }, reqOptions.headers);
-
-  const setIdentityToken = async(key, throwIfNotFound) => {
-    if (reqOptions.headers['x-youtube-identity-token']) { return; }
-    reqOptions.headers['x-youtube-identity-token'] = await getIdentityToken(id, options, key, throwIfNotFound);
-  };
-
-  if (cookie) {
-    await setIdentityToken(cookie, true);
-  }
-
-  const jsonUrl = getWatchJSONURL(id, options);
-  const body = await utils.exposedMiniget(jsonUrl, options, reqOptions).text();
-  let parsedBody = parseJSON('watch.json', 'body', body);
-  if (parsedBody.reload === 'now') {
-    await setIdentityToken('browser', false);
-  }
-  if (parsedBody.reload === 'now' || !Array.isArray(parsedBody)) {
-    throw Error('Unable to retrieve video metadata in watch.json');
-  }
-  let info = parsedBody.reduce((part, curr) => Object.assign(curr, part), {});
-  info.player_response = findPlayerResponse('watch.json', info);
-  info.html5player = info.player && info.player.assets && info.player.assets.js;
-
-  return info;
-};
-
-
-const getWatchHTMLPage = async(id, options) => {
-  let body = await getWatchHTMLPageBody(id, options);
-  let info = { page: 'watch' };
-  try {
-    cver = utils.between(body, '{"key":"cver","value":"', '"}');
-    info.player_response = findJSON('watch.html', 'player_response',
-      body, /\bytInitialPlayerResponse\s*=\s*\{/i, '</script>', '{');
-  } catch (err) {
-    let args = findJSON('watch.html', 'player_response', body, /\bytplayer\.config\s*=\s*{/, '</script>', '{');
-    info.player_response = findPlayerResponse('watch.html', args);
-  }
-  info.response = findJSON('watch.html', 'response', body, /\bytInitialData("\])?\s*=\s*\{/i, '</script>', '{');
-  info.html5player = getHTML5player(body);
-  return info;
-};
-
-
-const INFO_HOST = 'www.youtube.com';
-const INFO_PATH = '/get_video_info';
-const VIDEO_EURL = 'https://youtube.googleapis.com/v/';
-const getVideoInfoPage = async(id, options) => {
-  const url = new URL(`https://${INFO_HOST}${INFO_PATH}`);
-  url.searchParams.set('video_id', id);
-  url.searchParams.set('c', 'TVHTML5');
-  url.searchParams.set('cver', `7${cver.substr(1)}`);
-  url.searchParams.set('eurl', VIDEO_EURL + id);
-  url.searchParams.set('ps', 'default');
-  url.searchParams.set('gl', 'US');
-  url.searchParams.set('hl', options.lang || 'en');
-  url.searchParams.set('html5', '1');
-  const body = await utils.exposedMiniget(url.toString(), options).text();
-  let info = querystring.parse(body);
-  info.player_response = findPlayerResponse('get_video_info', info);
-  return info;
-};
-
-
-/**
- * @param {Object} player_response
- * @returns {Array.<Object>}
- */
-const parseFormats = player_response => {
-  let formats = [];
-  if (player_response && player_response.streamingData) {
-    formats = formats
-      .concat(player_response.streamingData.formats || [])
-      .concat(player_response.streamingData.adaptiveFormats || []);
-  }
-  return formats;
-};
-
-
-/**
- * Gets info from a video additional formats and deciphered URLs.
- *
- * @param {string} id
- * @param {Object} options
- * @returns {Promise<Object>}
- */
-exports.getInfo = async(id, options) => {
-  let info = await exports.getBasicInfo(id, options);
-  const hasManifest =
-    info.player_response && info.player_response.streamingData && (
-      info.player_response.streamingData.dashManifestUrl ||
-      info.player_response.streamingData.hlsManifestUrl
-    );
-  let funcs = [];
-  if (info.formats.length) {
-    info.html5player = info.html5player ||
-      getHTML5player(await getWatchHTMLPageBody(id, options)) || getHTML5player(await getEmbedPageBody(id, options));
-    if (!info.html5player) {
-      throw Error('Unable to find html5player file');
-    }
-    const html5player = new URL(info.html5player, BASE_URL).toString();
-    funcs.push(sig.decipherFormats(info.formats, html5player, options));
-  }
-  if (hasManifest && info.player_response.streamingData.dashManifestUrl) {
-    let url = info.player_response.streamingData.dashManifestUrl;
-    funcs.push(getDashManifest(url, options));
-  }
-  if (hasManifest && info.player_response.streamingData.hlsManifestUrl) {
-    let url = info.player_response.streamingData.hlsManifestUrl;
-    funcs.push(getM3U8(url, options));
-  }
-
-  let results = await Promise.all(funcs);
-  info.formats = Object.values(Object.assign({}, ...results));
-  info.formats = info.formats.map(formatUtils.addFormatMeta);
-  info.formats.sort(formatUtils.sortFormats);
-  info.full = true;
-  return info;
-};
-
-
-/**
- * Gets additional DASH formats.
- *
- * @param {string} url
- * @param {Object} options
- * @returns {Promise<Array.<Object>>}
- */
-const getDashManifest = (url, options) => new Promise((resolve, reject) => {
-  let formats = {};
-  const parser = sax.parser(false);
-  parser.onerror = reject;
-  let adaptationSet;
-  parser.onopentag = node => {
-    if (node.name === 'ADAPTATIONSET') {
-      adaptationSet = node.attributes;
-    } else if (node.name === 'REPRESENTATION') {
-      const itag = parseInt(node.attributes.ID);
-      if (!isNaN(itag)) {
-        formats[url] = Object.assign({
-          itag, url,
-          bitrate: parseInt(node.attributes.BANDWIDTH),
-          mimeType: `${adaptationSet.MIMETYPE}; codecs="${node.attributes.CODECS}"`,
-        }, node.attributes.HEIGHT ? {
-          width: parseInt(node.attributes.WIDTH),
-          height: parseInt(node.attributes.HEIGHT),
-          fps: parseInt(node.attributes.FRAMERATE),
-        } : {
-          audioSampleRate: node.attributes.AUDIOSAMPLINGRATE,
-        });
-      }
-    }
-  };
-  parser.onend = () => { resolve(formats); };
-  const req = utils.exposedMiniget(new URL(url, BASE_URL).toString(), options);
-  req.setEncoding('utf8');
-  req.on('error', reject);
-  req.on('data', chunk => { parser.write(chunk); });
-  req.on('end', parser.close.bind(parser));
-});
-
-
-/**
- * Gets additional formats.
- *
- * @param {string} url
- * @param {Object} options
- * @returns {Promise<Array.<Object>>}
- */
-const getM3U8 = async(url, options) => {
-  url = new URL(url, BASE_URL);
-  const body = await utils.exposedMiniget(url.toString(), options).text();
-  let formats = {};
-  body
-    .split('\n')
-    .filter(line => /^https?:\/\//.test(line))
-    .forEach(line => {
-      const itag = parseInt(line.match(/\/itag\/(\d+)\//)[1]);
-      formats[line] = { itag, url: line };
-    });
-  return formats;
-};
-
-
-// Cache get info functions.
-// In case a user wants to get a video's info before downloading.
-for (let funcName of ['getBasicInfo', 'getInfo']) {
-  /**
-   * @param {string} link
-   * @param {Object} options
-   * @returns {Promise<Object>}
-   */
-  const func = exports[funcName];
-  exports[funcName] = async(link, options = {}) => {
-    utils.checkForUpdates();
-    let id = await urlUtils.getVideoID(link);
-    const key = [funcName, id, options.lang].join('-');
-    return exports.cache.getOrSet(key, () => func(id, options));
-  };
-}
-
-
-// Export a few helpers.
-exports.validateID = urlUtils.validateID;
-exports.validateURL = urlUtils.validateURL;
-exports.getURLVideoID = urlUtils.getURLVideoID;
-exports.getVideoID = urlUtils.getVideoID;
-
-},{"./cache":9,"./format-utils":10,"./info-extras":13,"./sig":15,"./url-utils":16,"./utils":17,"miniget":7,"querystring":69,"sax":8,"timers":109}],15:[function(require,module,exports){
-const querystring = require('querystring');
-const Cache = require('./cache');
-const utils = require('./utils');
-
-
-// A shared cache to keep track of html5player.js tokens.
-exports.cache = new Cache();
-
-
-/**
- * Extract signature deciphering tokens from html5player file.
- *
- * @param {string} html5playerfile
- * @param {Object} options
- * @returns {Promise<Array.<string>>}
- */
-exports.getTokens = (html5playerfile, options) => exports.cache.getOrSet(html5playerfile, async() => {
-  const body = await utils.exposedMiniget(html5playerfile, options).text();
-  const tokens = exports.extractActions(body);
-  if (!tokens || !tokens.length) {
-    throw Error('Could not extract signature deciphering actions');
-  }
-  exports.cache.set(html5playerfile, tokens);
-  return tokens;
-});
-
-
-/**
- * Decipher a signature based on action tokens.
- *
- * @param {Array.<string>} tokens
- * @param {string} sig
- * @returns {string}
- */
-exports.decipher = (tokens, sig) => {
-  sig = sig.split('');
-  for (let i = 0, len = tokens.length; i < len; i++) {
-    let token = tokens[i], pos;
-    switch (token[0]) {
-      case 'r':
-        sig = sig.reverse();
-        break;
-      case 'w':
-        pos = ~~token.slice(1);
-        sig = swapHeadAndPosition(sig, pos);
-        break;
-      case 's':
-        pos = ~~token.slice(1);
-        sig = sig.slice(pos);
-        break;
-      case 'p':
-        pos = ~~token.slice(1);
-        sig.splice(0, pos);
-        break;
-    }
-  }
-  return sig.join('');
-};
-
-
-/**
- * Swaps the first element of an array with one of given position.
- *
- * @param {Array.<Object>} arr
- * @param {number} position
- * @returns {Array.<Object>}
- */
-const swapHeadAndPosition = (arr, position) => {
-  const first = arr[0];
-  arr[0] = arr[position % arr.length];
-  arr[position] = first;
-  return arr;
-};
-
-
-const jsVarStr = '[a-zA-Z_\\$][a-zA-Z_0-9]*';
-const jsSingleQuoteStr = `'[^'\\\\]*(:?\\\\[\\s\\S][^'\\\\]*)*'`;
-const jsDoubleQuoteStr = `"[^"\\\\]*(:?\\\\[\\s\\S][^"\\\\]*)*"`;
-const jsQuoteStr = `(?:${jsSingleQuoteStr}|${jsDoubleQuoteStr})`;
-const jsKeyStr = `(?:${jsVarStr}|${jsQuoteStr})`;
-const jsPropStr = `(?:\\.${jsVarStr}|\\[${jsQuoteStr}\\])`;
-const jsEmptyStr = `(?:''|"")`;
-const reverseStr = ':function\\(a\\)\\{' +
-  '(?:return )?a\\.reverse\\(\\)' +
-'\\}';
-const sliceStr = ':function\\(a,b\\)\\{' +
-  'return a\\.slice\\(b\\)' +
-'\\}';
-const spliceStr = ':function\\(a,b\\)\\{' +
-  'a\\.splice\\(0,b\\)' +
-'\\}';
-const swapStr = ':function\\(a,b\\)\\{' +
-  'var c=a\\[0\\];a\\[0\\]=a\\[b(?:%a\\.length)?\\];a\\[b(?:%a\\.length)?\\]=c(?:;return a)?' +
-'\\}';
-const actionsObjRegexp = new RegExp(
-  `var (${jsVarStr})=\\{((?:(?:${
-    jsKeyStr}${reverseStr}|${
-    jsKeyStr}${sliceStr}|${
-    jsKeyStr}${spliceStr}|${
-    jsKeyStr}${swapStr
-  }),?\\r?\\n?)+)\\};`);
-const actionsFuncRegexp = new RegExp(`${`function(?: ${jsVarStr})?\\(a\\)\\{` +
-    `a=a\\.split\\(${jsEmptyStr}\\);\\s*` +
-    `((?:(?:a=)?${jsVarStr}`}${
-  jsPropStr
-}\\(a,\\d+\\);)+)` +
-    `return a\\.join\\(${jsEmptyStr}\\)` +
-  `\\}`);
-const reverseRegexp = new RegExp(`(?:^|,)(${jsKeyStr})${reverseStr}`, 'm');
-const sliceRegexp = new RegExp(`(?:^|,)(${jsKeyStr})${sliceStr}`, 'm');
-const spliceRegexp = new RegExp(`(?:^|,)(${jsKeyStr})${spliceStr}`, 'm');
-const swapRegexp = new RegExp(`(?:^|,)(${jsKeyStr})${swapStr}`, 'm');
-
-
-/**
- * Extracts the actions that should be taken to decipher a signature.
- *
- * This searches for a function that performs string manipulations on
- * the signature. We already know what the 3 possible changes to a signature
- * are in order to decipher it. There is
- *
- * * Reversing the string.
- * * Removing a number of characters from the beginning.
- * * Swapping the first character with another position.
- *
- * Note, `Array#slice()` used to be used instead of `Array#splice()`,
- * it's kept in case we encounter any older html5player files.
- *
- * After retrieving the function that does this, we can see what actions
- * it takes on a signature.
- *
- * @param {string} body
- * @returns {Array.<string>}
- */
-exports.extractActions = body => {
-  const objResult = actionsObjRegexp.exec(body);
-  const funcResult = actionsFuncRegexp.exec(body);
-  if (!objResult || !funcResult) { return null; }
-
-  const obj = objResult[1].replace(/\$/g, '\\$');
-  const objBody = objResult[2].replace(/\$/g, '\\$');
-  const funcBody = funcResult[1].replace(/\$/g, '\\$');
-
-  let result = reverseRegexp.exec(objBody);
-  const reverseKey = result && result[1]
-    .replace(/\$/g, '\\$')
-    .replace(/\$|^'|^"|'$|"$/g, '');
-  result = sliceRegexp.exec(objBody);
-  const sliceKey = result && result[1]
-    .replace(/\$/g, '\\$')
-    .replace(/\$|^'|^"|'$|"$/g, '');
-  result = spliceRegexp.exec(objBody);
-  const spliceKey = result && result[1]
-    .replace(/\$/g, '\\$')
-    .replace(/\$|^'|^"|'$|"$/g, '');
-  result = swapRegexp.exec(objBody);
-  const swapKey = result && result[1]
-    .replace(/\$/g, '\\$')
-    .replace(/\$|^'|^"|'$|"$/g, '');
-
-  const keys = `(${[reverseKey, sliceKey, spliceKey, swapKey].join('|')})`;
-  const myreg = `(?:a=)?${obj
-  }(?:\\.${keys}|\\['${keys}'\\]|\\["${keys}"\\])` +
-    `\\(a,(\\d+)\\)`;
-  const tokenizeRegexp = new RegExp(myreg, 'g');
-  const tokens = [];
-  while ((result = tokenizeRegexp.exec(funcBody)) !== null) {
-    let key = result[1] || result[2] || result[3];
-    switch (key) {
-      case swapKey:
-        tokens.push(`w${result[4]}`);
-        break;
-      case reverseKey:
-        tokens.push('r');
-        break;
-      case sliceKey:
-        tokens.push(`s${result[4]}`);
-        break;
-      case spliceKey:
-        tokens.push(`p${result[4]}`);
-        break;
-    }
-  }
-  return tokens;
-};
-
-
-/**
- * @param {Object} format
- * @param {string} sig
- */
-exports.setDownloadURL = (format, sig) => {
-  let decodedUrl;
-  if (format.url) {
-    decodedUrl = format.url;
-  } else {
-    return;
-  }
-
-  try {
-    decodedUrl = decodeURIComponent(decodedUrl);
-  } catch (err) {
-    return;
-  }
-
-  // Make some adjustments to the final url.
-  const parsedUrl = new URL(decodedUrl);
-
-  // This is needed for a speedier download.
-  // See https://github.com/fent/node-ytdl-core/issues/127
-  parsedUrl.searchParams.set('ratebypass', 'yes');
-
-  if (sig) {
-    // When YouTube provides a `sp` parameter the signature `sig` must go
-    // into the parameter it specifies.
-    // See https://github.com/fent/node-ytdl-core/issues/417
-    parsedUrl.searchParams.set(format.sp || 'signature', sig);
-  }
-
-  format.url = parsedUrl.toString();
-};
-
-
-/**
- * Applies `sig.decipher()` to all format URL's.
- *
- * @param {Array.<Object>} formats
- * @param {string} html5player
- * @param {Object} options
- */
-exports.decipherFormats = async(formats, html5player, options) => {
-  let decipheredFormats = {};
-  let tokens = await exports.getTokens(html5player, options);
-  formats.forEach(format => {
-    let cipher = format.signatureCipher || format.cipher;
-    if (cipher) {
-      Object.assign(format, querystring.parse(cipher));
-      delete format.signatureCipher;
-      delete format.cipher;
-    }
-    const sig = tokens && format.s ? exports.decipher(tokens, format.s) : null;
-    exports.setDownloadURL(format, sig);
-    decipheredFormats[format.url] = format;
-  });
-  return decipheredFormats;
-};
-
-},{"./cache":9,"./utils":17,"querystring":69}],16:[function(require,module,exports){
-/**
- * Get video ID.
- *
- * There are a few type of video URL formats.
- *  - https://www.youtube.com/watch?v=VIDEO_ID
- *  - https://m.youtube.com/watch?v=VIDEO_ID
- *  - https://youtu.be/VIDEO_ID
- *  - https://www.youtube.com/v/VIDEO_ID
- *  - https://www.youtube.com/embed/VIDEO_ID
- *  - https://music.youtube.com/watch?v=VIDEO_ID
- *  - https://gaming.youtube.com/watch?v=VIDEO_ID
- *
- * @param {string} link
- * @return {string}
- * @throws {Error} If unable to find a id
- * @throws {TypeError} If videoid doesn't match specs
- */
-const validQueryDomains = new Set([
-  'youtube.com',
-  'www.youtube.com',
-  'm.youtube.com',
-  'music.youtube.com',
-  'gaming.youtube.com',
-]);
-const validPathDomains = /^https?:\/\/(youtu\.be\/|(www\.)?youtube\.com\/(embed|v|shorts)\/)/;
-exports.getURLVideoID = link => {
-  const parsed = new URL(link);
-  let id = parsed.searchParams.get('v');
-  if (validPathDomains.test(link) && !id) {
-    const paths = parsed.pathname.split('/');
-    id = parsed.host === 'youtu.be' ? paths[1] : paths[2];
-  } else if (parsed.hostname && !validQueryDomains.has(parsed.hostname)) {
-    throw Error('Not a YouTube domain');
-  }
-  if (!id) {
-    throw Error(`No video id found: ${link}`);
-  }
-  id = id.substring(0, 11);
-  if (!exports.validateID(id)) {
-    throw TypeError(`Video id (${id}) does not match expected ` +
-      `format (${idRegex.toString()})`);
-  }
-  return id;
-};
-
-
-/**
- * Gets video ID either from a url or by checking if the given string
- * matches the video ID format.
- *
- * @param {string} str
- * @returns {string}
- * @throws {Error} If unable to find a id
- * @throws {TypeError} If videoid doesn't match specs
- */
-const urlRegex = /^https?:\/\//;
-exports.getVideoID = str => {
-  if (exports.validateID(str)) {
-    return str;
-  } else if (urlRegex.test(str)) {
-    return exports.getURLVideoID(str);
-  } else {
-    throw Error(`No video id found: ${str}`);
-  }
-};
-
-
-/**
- * Returns true if given id satifies YouTube's id format.
- *
- * @param {string} id
- * @return {boolean}
- */
-const idRegex = /^[a-zA-Z0-9-_]{11}$/;
-exports.validateID = id => idRegex.test(id);
-
-
-/**
- * Checks wether the input string includes a valid id.
- *
- * @param {string} string
- * @returns {boolean}
- */
-exports.validateURL = string => {
-  try {
-    exports.getURLVideoID(string);
-    return true;
-  } catch (e) {
-    return false;
-  }
-};
-
-},{}],17:[function(require,module,exports){
-(function (process){(function (){
-const miniget = require('miniget');
-
-
-/**
- * Extract string inbetween another.
- *
- * @param {string} haystack
- * @param {string} left
- * @param {string} right
- * @returns {string}
- */
-exports.between = (haystack, left, right) => {
-  let pos;
-  if (left instanceof RegExp) {
-    const match = haystack.match(left);
-    if (!match) { return ''; }
-    pos = match.index + match[0].length;
-  } else {
-    pos = haystack.indexOf(left);
-    if (pos === -1) { return ''; }
-    pos += left.length;
-  }
-  haystack = haystack.slice(pos);
-  pos = haystack.indexOf(right);
-  if (pos === -1) { return ''; }
-  haystack = haystack.slice(0, pos);
-  return haystack;
-};
-
-
-/**
- * Get a number from an abbreviated number string.
- *
- * @param {string} string
- * @returns {number}
- */
-exports.parseAbbreviatedNumber = string => {
-  const match = string
-    .replace(',', '.')
-    .replace(' ', '')
-    .match(/([\d,.]+)([MK]?)/);
-  if (match) {
-    let [, num, multi] = match;
-    num = parseFloat(num);
-    return Math.round(multi === 'M' ? num * 1000000 :
-      multi === 'K' ? num * 1000 : num);
-  }
-  return null;
-};
-
-
-/**
- * Match begin and end braces of input JSON, return only json
- *
- * @param {string} mixedJson
- * @returns {string}
-*/
-exports.cutAfterJSON = mixedJson => {
-  let open, close;
-  if (mixedJson[0] === '[') {
-    open = '[';
-    close = ']';
-  } else if (mixedJson[0] === '{') {
-    open = '{';
-    close = '}';
-  }
-
-  if (!open) {
-    throw new Error(`Can't cut unsupported JSON (need to begin with [ or { ) but got: ${mixedJson[0]}`);
-  }
-
-  // States if the loop is currently in a string
-  let isString = false;
-
-  // States if the current character is treated as escaped or not
-  let isEscaped = false;
-
-  // Current open brackets to be closed
-  let counter = 0;
-
-  let i;
-  for (i = 0; i < mixedJson.length; i++) {
-    // Toggle the isString boolean when leaving/entering string
-    if (mixedJson[i] === '"' && !isEscaped) {
-      isString = !isString;
-      continue;
-    }
-
-    // Toggle the isEscaped boolean for every backslash
-    // Reset for every regular character
-    isEscaped = mixedJson[i] === '\\' && !isEscaped;
-
-    if (isString) continue;
-
-    if (mixedJson[i] === open) {
-      counter++;
-    } else if (mixedJson[i] === close) {
-      counter--;
-    }
-
-    // All brackets have been closed, thus end of JSON is reached
-    if (counter === 0) {
-      // Return the cut JSON
-      return mixedJson.substr(0, i + 1);
-    }
-  }
-
-  // We ran through the whole string and ended up with an unclosed bracket
-  throw Error("Can't cut unsupported JSON (no matching closing bracket found)");
-};
-
-
-/**
- * Checks if there is a playability error.
- *
- * @param {Object} player_response
- * @param {Array.<string>} statuses
- * @param {Error} ErrorType
- * @returns {!Error}
- */
-exports.playError = (player_response, statuses, ErrorType = Error) => {
-  let playability = player_response && player_response.playabilityStatus;
-  if (playability && statuses.includes(playability.status)) {
-    return new ErrorType(playability.reason || (playability.messages && playability.messages[0]));
-  }
-  return null;
-};
-
-/**
- * Does a miniget request and calls options.requestCallback if present
- *
- * @param {string} url the request url
- * @param {Object} options an object with optional requestOptions and requestCallback parameters
- * @param {Object} requestOptionsOverwrite overwrite of options.requestOptions
- * @returns {miniget.Stream}
- */
-exports.exposedMiniget = (url, options = {}, requestOptionsOverwrite) => {
-  const req = miniget(url, requestOptionsOverwrite || options.requestOptions);
-  if (typeof options.requestCallback === 'function') options.requestCallback(req);
-  return req;
-};
-
-/**
- * Temporary helper to help deprecating a few properties.
- *
- * @param {Object} obj
- * @param {string} prop
- * @param {Object} value
- * @param {string} oldPath
- * @param {string} newPath
- */
-exports.deprecate = (obj, prop, value, oldPath, newPath) => {
-  Object.defineProperty(obj, prop, {
-    get: () => {
-      console.warn(`\`${oldPath}\` will be removed in a near future release, ` +
-        `use \`${newPath}\` instead.`);
-      return value;
-    },
-  });
-};
-
-
-// Check for updates.
-const pkg = require('../package.json');
-const UPDATE_INTERVAL = 1000 * 60 * 60 * 12;
-exports.lastUpdateCheck = 0;
-exports.checkForUpdates = () => {
-  if (!process.env.YTDL_NO_UPDATE && !pkg.version.startsWith('0.0.0-') &&
-    Date.now() - exports.lastUpdateCheck >= UPDATE_INTERVAL) {
-    exports.lastUpdateCheck = Date.now();
-    return miniget('https://api.github.com/repos/fent/node-ytdl-core/releases/latest', {
-      headers: { 'User-Agent': 'ytdl-core' },
-    }).text().then(response => {
-      if (JSON.parse(response).tag_name !== `v${pkg.version}`) {
-        console.warn('\x1b[33mWARNING:\x1B[0m ytdl-core is out of date! Update with "npm install ytdl-core@latest".');
-      }
-    }, err => {
-      console.warn('Error checking for updates:', err.message);
-      console.warn('You can disable this check by setting the `YTDL_NO_UPDATE` env variable.');
-    });
-  }
-  return null;
-};
-
-}).call(this)}).call(this,require('_process'))
-},{"../package.json":18,"_process":66,"miniget":7}],18:[function(require,module,exports){
-module.exports={
-  "name": "ytdl-core",
-  "description": "YouTube video downloader in pure javascript.",
-  "keywords": [
-    "youtube",
-    "video",
-    "download"
-  ],
-  "version": "4.9.1",
-  "repository": {
-    "type": "git",
-    "url": "git://github.com/fent/node-ytdl-core.git"
-  },
-  "author": "fent <fentbox@gmail.com> (https://github.com/fent)",
-  "contributors": [
-    "Tobias Kutscha (https://github.com/TimeForANinja)",
-    "Andrew Kelley (https://github.com/andrewrk)",
-    "Mauricio Allende (https://github.com/mallendeo)",
-    "Rodrigo Altamirano (https://github.com/raltamirano)",
-    "Jim Buck (https://github.com/JimmyBoh)"
-  ],
-  "main": "./lib/index.js",
-  "types": "./typings/index.d.ts",
-  "files": [
-    "lib",
-    "typings"
-  ],
-  "scripts": {
-    "test": "nyc --reporter=lcov --reporter=text-summary npm run test:unit",
-    "test:unit": "mocha --ignore test/irl-test.js test/*-test.js --timeout 4000",
-    "test:irl": "mocha --timeout 16000 test/irl-test.js",
-    "lint": "eslint ./",
-    "lint:fix": "eslint --fix ./",
-    "lint:typings": "tslint typings/index.d.ts",
-    "lint:typings:fix": "tslint --fix typings/index.d.ts"
-  },
-  "dependencies": {
-    "m3u8stream": "^0.8.3",
-    "miniget": "^4.0.0",
-    "sax": "^1.1.3"
-  },
-  "devDependencies": {
-    "@types/node": "^13.1.0",
-    "assert-diff": "^3.0.1",
-    "dtslint": "^3.6.14",
-    "eslint": "^6.8.0",
-    "mocha": "^7.0.0",
-    "muk-require": "^1.2.0",
-    "nock": "^13.0.4",
-    "nyc": "^15.0.0",
-    "sinon": "^9.0.0",
-    "stream-equal": "~1.1.0",
-    "typescript": "^3.9.7"
-  },
-  "engines": {
-    "node": ">=10"
-  },
-  "license": "MIT"
-}
-
-},{}],19:[function(require,module,exports){
 (function (process,setImmediate){(function (){
 (function (global, factory) {
     typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
@@ -11086,7 +6028,7 @@ module.exports={
 })));
 
 }).call(this)}).call(this,require('_process'),require("timers").setImmediate)
-},{"_process":66,"timers":109}],20:[function(require,module,exports){
+},{"_process":48,"timers":91}],2:[function(require,module,exports){
 (function (global){(function (){
 'use strict';
 
@@ -11115,7 +6057,7 @@ module.exports = function availableTypedArrays() {
 };
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],21:[function(require,module,exports){
+},{}],3:[function(require,module,exports){
 'use strict'
 
 exports.byteLength = byteLength
@@ -11267,11 +6209,11 @@ function fromByteArray (uint8) {
   return parts.join('')
 }
 
-},{}],22:[function(require,module,exports){
+},{}],4:[function(require,module,exports){
 
-},{}],23:[function(require,module,exports){
-arguments[4][22][0].apply(exports,arguments)
-},{"dup":22}],24:[function(require,module,exports){
+},{}],5:[function(require,module,exports){
+arguments[4][4][0].apply(exports,arguments)
+},{"dup":4}],6:[function(require,module,exports){
 (function (Buffer){(function (){
 /*!
  * The buffer module from node.js, for the browser.
@@ -13052,7 +7994,7 @@ function numberIsNaN (obj) {
 }
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"base64-js":21,"buffer":24,"ieee754":55}],25:[function(require,module,exports){
+},{"base64-js":3,"buffer":6,"ieee754":37}],7:[function(require,module,exports){
 (function (global){(function (){
 /*! https://mths.be/punycode v1.4.1 by @mathias */
 ;(function(root) {
@@ -13589,7 +8531,7 @@ function numberIsNaN (obj) {
 }(this));
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],26:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 module.exports = {
   "100": "Continue",
   "101": "Switching Protocols",
@@ -13655,7 +8597,7 @@ module.exports = {
   "511": "Network Authentication Required"
 }
 
-},{}],27:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 'use strict';
 
 var GetIntrinsic = require('get-intrinsic');
@@ -13672,7 +8614,7 @@ module.exports = function callBoundIntrinsic(name, allowMissing) {
 	return intrinsic;
 };
 
-},{"./":28,"get-intrinsic":49}],28:[function(require,module,exports){
+},{"./":10,"get-intrinsic":31}],10:[function(require,module,exports){
 'use strict';
 
 var bind = require('function-bind');
@@ -13721,7 +8663,7 @@ if ($defineProperty) {
 	module.exports.apply = applyBind;
 }
 
-},{"function-bind":48,"get-intrinsic":49}],29:[function(require,module,exports){
+},{"function-bind":30,"get-intrinsic":31}],11:[function(require,module,exports){
 'use strict';
 
 var GetIntrinsic = require('get-intrinsic');
@@ -13738,7 +8680,7 @@ if ($gOPD) {
 
 module.exports = $gOPD;
 
-},{"get-intrinsic":49}],30:[function(require,module,exports){
+},{"get-intrinsic":31}],12:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -14237,12 +9179,12 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
   }
 }
 
-},{}],31:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 (function (process){(function (){
 module.exports = process.env.FLUENTFFMPEG_COV ? require('./lib/fluent-ffmpeg') : require('./lib/fluent-ffmpeg');
 
 }).call(this)}).call(this,require('_process'))
-},{"./lib/fluent-ffmpeg":34,"_process":66}],32:[function(require,module,exports){
+},{"./lib/fluent-ffmpeg":16,"_process":48}],14:[function(require,module,exports){
 (function (process){(function (){
 /*jshint node:true*/
 'use strict';
@@ -14911,11 +9853,11 @@ module.exports = function(proto) {
 };
 
 }).call(this)}).call(this,require('_process'))
-},{"./utils":44,"_process":66,"async":19,"fs":23,"path":65}],33:[function(require,module,exports){
+},{"./utils":26,"_process":48,"async":1,"fs":5,"path":47}],15:[function(require,module,exports){
 /*jshint node:true, laxcomma:true*/
 'use strict';
 
-var spawn = require('child_process').spawn;
+var spawn = window.require('child_process').spawn;
 
 
 function legacyTag(key) { return key.match(/^TAG:/); }
@@ -15174,7 +10116,7 @@ module.exports = function(proto) {
   };
 };
 
-},{"child_process":23}],34:[function(require,module,exports){
+},{"child_process":5}],16:[function(require,module,exports){
 (function (__dirname){(function (){
 /*jshint node:true*/
 'use strict';
@@ -15404,7 +10346,7 @@ FfmpegCommand.ffprobe = function(file) {
 require('./recipes')(FfmpegCommand.prototype);
 
 }).call(this)}).call(this,"/node_modules/fluent-ffmpeg/lib")
-},{"./capabilities":32,"./ffprobe":33,"./options/audio":35,"./options/custom":36,"./options/inputs":37,"./options/misc":38,"./options/output":39,"./options/video":40,"./options/videosize":41,"./processor":42,"./recipes":43,"./utils":44,"events":30,"path":65,"util":118}],35:[function(require,module,exports){
+},{"./capabilities":14,"./ffprobe":15,"./options/audio":17,"./options/custom":18,"./options/inputs":19,"./options/misc":20,"./options/output":21,"./options/video":22,"./options/videosize":23,"./processor":24,"./recipes":25,"./utils":26,"events":12,"path":47,"util":100}],17:[function(require,module,exports){
 /*jshint node:true*/
 'use strict';
 
@@ -15584,7 +10526,7 @@ module.exports = function(proto) {
   };
 };
 
-},{"../utils":44}],36:[function(require,module,exports){
+},{"../utils":26}],18:[function(require,module,exports){
 /*jshint node:true*/
 'use strict';
 
@@ -15798,7 +10740,7 @@ module.exports = function(proto) {
   };
 };
 
-},{"../utils":44}],37:[function(require,module,exports){
+},{"../utils":26}],19:[function(require,module,exports){
 /*jshint node:true*/
 'use strict';
 
@@ -15978,7 +10920,7 @@ module.exports = function(proto) {
   };
 };
 
-},{"../utils":44}],38:[function(require,module,exports){
+},{"../utils":26}],20:[function(require,module,exports){
 /*jshint node:true*/
 'use strict';
 
@@ -16021,7 +10963,7 @@ module.exports = function(proto) {
   };
 };
 
-},{"path":65}],39:[function(require,module,exports){
+},{"path":47}],21:[function(require,module,exports){
 /*jshint node:true*/
 'use strict';
 
@@ -16185,7 +11127,7 @@ module.exports = function(proto) {
   };
 };
 
-},{"../utils":44}],40:[function(require,module,exports){
+},{"../utils":26}],22:[function(require,module,exports){
 /*jshint node:true*/
 'use strict';
 
@@ -16371,7 +11313,7 @@ module.exports = function(proto) {
   };
 };
 
-},{"../utils":44}],41:[function(require,module,exports){
+},{"../utils":26}],23:[function(require,module,exports){
 /*jshint node:true*/
 'use strict';
 
@@ -16664,11 +11606,11 @@ module.exports = function(proto) {
   };
 };
 
-},{}],42:[function(require,module,exports){
+},{}],24:[function(require,module,exports){
 /*jshint node:true*/
 'use strict';
 
-var spawn = require('child_process').spawn;
+var spawn = window.require('child_process').spawn;
 var path = require('path');
 var fs = require('fs');
 var async = require('async');
@@ -17327,7 +12269,7 @@ module.exports = function(proto) {
   };
 };
 
-},{"./utils":44,"async":19,"child_process":23,"fs":23,"path":65}],43:[function(require,module,exports){
+},{"./utils":26,"async":1,"child_process":5,"fs":5,"path":47}],25:[function(require,module,exports){
 (function (process){(function (){
 /*jshint node:true*/
 'use strict';
@@ -17787,7 +12729,7 @@ module.exports = function recipes(proto) {
 };
 
 }).call(this)}).call(this,require('_process'))
-},{"./utils":44,"_process":66,"async":19,"fs":23,"path":65,"stream":72}],44:[function(require,module,exports){
+},{"./utils":26,"_process":48,"async":1,"fs":5,"path":47,"stream":54}],26:[function(require,module,exports){
 (function (Buffer){(function (){
 /*jshint node:true*/
 'use strict';
@@ -18246,7 +13188,7 @@ var utils = module.exports = {
 };
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"buffer":24,"child_process":23,"os":64,"which":45}],45:[function(require,module,exports){
+},{"buffer":6,"child_process":5,"os":46,"which":27}],27:[function(require,module,exports){
 (function (process){(function (){
 module.exports = which
 which.sync = whichSync
@@ -18385,7 +13327,7 @@ function whichSync (cmd, opt) {
 }
 
 }).call(this)}).call(this,require('_process'))
-},{"_process":66,"isexe":60,"path":65}],46:[function(require,module,exports){
+},{"_process":48,"isexe":42,"path":47}],28:[function(require,module,exports){
 
 var hasOwn = Object.prototype.hasOwnProperty;
 var toString = Object.prototype.toString;
@@ -18409,7 +13351,7 @@ module.exports = function forEach (obj, fn, ctx) {
 };
 
 
-},{}],47:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 'use strict';
 
 /* eslint no-invalid-this: 1 */
@@ -18463,14 +13405,14 @@ module.exports = function bind(that) {
     return bound;
 };
 
-},{}],48:[function(require,module,exports){
+},{}],30:[function(require,module,exports){
 'use strict';
 
 var implementation = require('./implementation');
 
 module.exports = Function.prototype.bind || implementation;
 
-},{"./implementation":47}],49:[function(require,module,exports){
+},{"./implementation":29}],31:[function(require,module,exports){
 'use strict';
 
 var undefined;
@@ -18802,7 +13744,7 @@ module.exports = function GetIntrinsic(name, allowMissing) {
 	return value;
 };
 
-},{"function-bind":48,"has":53,"has-symbols":50}],50:[function(require,module,exports){
+},{"function-bind":30,"has":35,"has-symbols":32}],32:[function(require,module,exports){
 'use strict';
 
 var origSymbol = typeof Symbol !== 'undefined' && Symbol;
@@ -18817,7 +13759,7 @@ module.exports = function hasNativeSymbols() {
 	return hasSymbolSham();
 };
 
-},{"./shams":51}],51:[function(require,module,exports){
+},{"./shams":33}],33:[function(require,module,exports){
 'use strict';
 
 /* eslint complexity: [2, 18], max-statements: [2, 33] */
@@ -18861,7 +13803,7 @@ module.exports = function hasSymbols() {
 	return true;
 };
 
-},{}],52:[function(require,module,exports){
+},{}],34:[function(require,module,exports){
 'use strict';
 
 var hasSymbols = require('has-symbols/shams');
@@ -18870,14 +13812,14 @@ module.exports = function hasToStringTagShams() {
 	return hasSymbols() && !!Symbol.toStringTag;
 };
 
-},{"has-symbols/shams":51}],53:[function(require,module,exports){
+},{"has-symbols/shams":33}],35:[function(require,module,exports){
 'use strict';
 
 var bind = require('function-bind');
 
 module.exports = bind.call(Function.call, Object.prototype.hasOwnProperty);
 
-},{"function-bind":48}],54:[function(require,module,exports){
+},{"function-bind":30}],36:[function(require,module,exports){
 var http = require('http')
 var url = require('url')
 
@@ -18910,7 +13852,7 @@ function validateParams (params) {
   return params
 }
 
-},{"http":87,"url":112}],55:[function(require,module,exports){
+},{"http":69,"url":94}],37:[function(require,module,exports){
 /*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> */
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
@@ -18997,7 +13939,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],56:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -19026,7 +13968,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],57:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 'use strict';
 
 var hasToStringTag = require('has-tostringtag/shams')();
@@ -19061,7 +14003,7 @@ isStandardArguments.isLegacyArguments = isLegacyArguments; // for tests
 
 module.exports = supportsStandardArguments ? isStandardArguments : isLegacyArguments;
 
-},{"call-bind/callBound":27,"has-tostringtag/shams":52}],58:[function(require,module,exports){
+},{"call-bind/callBound":9,"has-tostringtag/shams":34}],40:[function(require,module,exports){
 'use strict';
 
 var toStr = Object.prototype.toString;
@@ -19101,7 +14043,7 @@ module.exports = function isGeneratorFunction(fn) {
 	return getProto(fn) === GeneratorFunction;
 };
 
-},{"has-tostringtag/shams":52}],59:[function(require,module,exports){
+},{"has-tostringtag/shams":34}],41:[function(require,module,exports){
 (function (global){(function (){
 'use strict';
 
@@ -19164,7 +14106,7 @@ module.exports = function isTypedArray(value) {
 };
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"available-typed-arrays":20,"call-bind/callBound":27,"es-abstract/helpers/getOwnPropertyDescriptor":29,"foreach":46,"has-tostringtag/shams":52}],60:[function(require,module,exports){
+},{"available-typed-arrays":2,"call-bind/callBound":9,"es-abstract/helpers/getOwnPropertyDescriptor":11,"foreach":28,"has-tostringtag/shams":34}],42:[function(require,module,exports){
 (function (process,global){(function (){
 var fs = require('fs')
 var core
@@ -19225,7 +14167,7 @@ function sync (path, options) {
 }
 
 }).call(this)}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./mode.js":61,"./windows.js":62,"_process":66,"fs":23}],61:[function(require,module,exports){
+},{"./mode.js":43,"./windows.js":44,"_process":48,"fs":5}],43:[function(require,module,exports){
 (function (process){(function (){
 module.exports = isexe
 isexe.sync = sync
@@ -19270,7 +14212,7 @@ function checkMode (stat, options) {
 }
 
 }).call(this)}).call(this,require('_process'))
-},{"_process":66,"fs":23}],62:[function(require,module,exports){
+},{"_process":48,"fs":5}],44:[function(require,module,exports){
 (function (process){(function (){
 module.exports = isexe
 isexe.sync = sync
@@ -19316,7 +14258,7 @@ function sync (path, options) {
 }
 
 }).call(this)}).call(this,require('_process'))
-},{"_process":66,"fs":23}],63:[function(require,module,exports){
+},{"_process":48,"fs":5}],45:[function(require,module,exports){
 /*!
  * jQuery JavaScript Library v3.6.0
  * https://jquery.com/
@@ -30199,7 +25141,7 @@ if ( typeof noGlobal === "undefined" ) {
 return jQuery;
 } );
 
-},{}],64:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 exports.endianness = function () { return 'LE' };
 
 exports.hostname = function () {
@@ -30250,7 +25192,7 @@ exports.homedir = function () {
 	return '/'
 };
 
-},{}],65:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 (function (process){(function (){
 // 'path' module extracted from Node.js v8.11.1 (only the posix part)
 // transplited with Babel
@@ -30783,7 +25725,7 @@ posix.posix = posix;
 module.exports = posix;
 
 }).call(this)}).call(this,require('_process'))
-},{"_process":66}],66:[function(require,module,exports){
+},{"_process":48}],48:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -30969,7 +25911,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],67:[function(require,module,exports){
+},{}],49:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -31055,7 +25997,7 @@ var isArray = Array.isArray || function (xs) {
   return Object.prototype.toString.call(xs) === '[object Array]';
 };
 
-},{}],68:[function(require,module,exports){
+},{}],50:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -31142,13 +26084,13 @@ var objectKeys = Object.keys || function (obj) {
   return res;
 };
 
-},{}],69:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
 'use strict';
 
 exports.decode = exports.parse = require('./decode');
 exports.encode = exports.stringify = require('./encode');
 
-},{"./decode":67,"./encode":68}],70:[function(require,module,exports){
+},{"./decode":49,"./encode":50}],52:[function(require,module,exports){
 /*jshint node:true*/
 'use strict';
 
@@ -31209,7 +26151,7 @@ module.exports = function (input, options) {
   return sanitize(output, '');
 };
 
-},{"truncate-utf8-bytes":110}],71:[function(require,module,exports){
+},{"truncate-utf8-bytes":92}],53:[function(require,module,exports){
 var tick = 1
 var maxTick = 65535
 var resolution = 4
@@ -31250,7 +26192,7 @@ module.exports = function (seconds) {
   }
 }
 
-},{}],72:[function(require,module,exports){
+},{}],54:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -31381,7 +26323,7 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"events":30,"inherits":56,"readable-stream/lib/_stream_duplex.js":74,"readable-stream/lib/_stream_passthrough.js":75,"readable-stream/lib/_stream_readable.js":76,"readable-stream/lib/_stream_transform.js":77,"readable-stream/lib/_stream_writable.js":78,"readable-stream/lib/internal/streams/end-of-stream.js":82,"readable-stream/lib/internal/streams/pipeline.js":84}],73:[function(require,module,exports){
+},{"events":12,"inherits":38,"readable-stream/lib/_stream_duplex.js":56,"readable-stream/lib/_stream_passthrough.js":57,"readable-stream/lib/_stream_readable.js":58,"readable-stream/lib/_stream_transform.js":59,"readable-stream/lib/_stream_writable.js":60,"readable-stream/lib/internal/streams/end-of-stream.js":64,"readable-stream/lib/internal/streams/pipeline.js":66}],55:[function(require,module,exports){
 'use strict';
 
 function _inheritsLoose(subClass, superClass) { subClass.prototype = Object.create(superClass.prototype); subClass.prototype.constructor = subClass; subClass.__proto__ = superClass; }
@@ -31510,7 +26452,7 @@ createErrorType('ERR_UNKNOWN_ENCODING', function (arg) {
 createErrorType('ERR_STREAM_UNSHIFT_AFTER_END_EVENT', 'stream.unshift() after end event');
 module.exports.codes = codes;
 
-},{}],74:[function(require,module,exports){
+},{}],56:[function(require,module,exports){
 (function (process){(function (){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -31652,7 +26594,7 @@ Object.defineProperty(Duplex.prototype, 'destroyed', {
   }
 });
 }).call(this)}).call(this,require('_process'))
-},{"./_stream_readable":76,"./_stream_writable":78,"_process":66,"inherits":56}],75:[function(require,module,exports){
+},{"./_stream_readable":58,"./_stream_writable":60,"_process":48,"inherits":38}],57:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -31692,7 +26634,7 @@ function PassThrough(options) {
 PassThrough.prototype._transform = function (chunk, encoding, cb) {
   cb(null, chunk);
 };
-},{"./_stream_transform":77,"inherits":56}],76:[function(require,module,exports){
+},{"./_stream_transform":59,"inherits":38}],58:[function(require,module,exports){
 (function (process,global){(function (){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -32819,7 +27761,7 @@ function indexOf(xs, x) {
   return -1;
 }
 }).call(this)}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"../errors":73,"./_stream_duplex":74,"./internal/streams/async_iterator":79,"./internal/streams/buffer_list":80,"./internal/streams/destroy":81,"./internal/streams/from":83,"./internal/streams/state":85,"./internal/streams/stream":86,"_process":66,"buffer":24,"events":30,"inherits":56,"string_decoder/":107,"util":22}],77:[function(require,module,exports){
+},{"../errors":55,"./_stream_duplex":56,"./internal/streams/async_iterator":61,"./internal/streams/buffer_list":62,"./internal/streams/destroy":63,"./internal/streams/from":65,"./internal/streams/state":67,"./internal/streams/stream":68,"_process":48,"buffer":6,"events":12,"inherits":38,"string_decoder/":89,"util":4}],59:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -33021,7 +27963,7 @@ function done(stream, er, data) {
   if (stream._transformState.transforming) throw new ERR_TRANSFORM_ALREADY_TRANSFORMING();
   return stream.push(null);
 }
-},{"../errors":73,"./_stream_duplex":74,"inherits":56}],78:[function(require,module,exports){
+},{"../errors":55,"./_stream_duplex":56,"inherits":38}],60:[function(require,module,exports){
 (function (process,global){(function (){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -33721,7 +28663,7 @@ Writable.prototype._destroy = function (err, cb) {
   cb(err);
 };
 }).call(this)}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"../errors":73,"./_stream_duplex":74,"./internal/streams/destroy":81,"./internal/streams/state":85,"./internal/streams/stream":86,"_process":66,"buffer":24,"inherits":56,"util-deprecate":115}],79:[function(require,module,exports){
+},{"../errors":55,"./_stream_duplex":56,"./internal/streams/destroy":63,"./internal/streams/state":67,"./internal/streams/stream":68,"_process":48,"buffer":6,"inherits":38,"util-deprecate":97}],61:[function(require,module,exports){
 (function (process){(function (){
 'use strict';
 
@@ -33931,7 +28873,7 @@ var createReadableStreamAsyncIterator = function createReadableStreamAsyncIterat
 
 module.exports = createReadableStreamAsyncIterator;
 }).call(this)}).call(this,require('_process'))
-},{"./end-of-stream":82,"_process":66}],80:[function(require,module,exports){
+},{"./end-of-stream":64,"_process":48}],62:[function(require,module,exports){
 'use strict';
 
 function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); if (enumerableOnly) symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; }); keys.push.apply(keys, symbols); } return keys; }
@@ -34142,7 +29084,7 @@ function () {
 
   return BufferList;
 }();
-},{"buffer":24,"util":22}],81:[function(require,module,exports){
+},{"buffer":6,"util":4}],63:[function(require,module,exports){
 (function (process){(function (){
 'use strict'; // undocumented cb() API, needed for core, not for public API
 
@@ -34250,7 +29192,7 @@ module.exports = {
   errorOrDestroy: errorOrDestroy
 };
 }).call(this)}).call(this,require('_process'))
-},{"_process":66}],82:[function(require,module,exports){
+},{"_process":48}],64:[function(require,module,exports){
 // Ported from https://github.com/mafintosh/end-of-stream with
 // permission from the author, Mathias Buus (@mafintosh).
 'use strict';
@@ -34355,12 +29297,12 @@ function eos(stream, opts, callback) {
 }
 
 module.exports = eos;
-},{"../../../errors":73}],83:[function(require,module,exports){
+},{"../../../errors":55}],65:[function(require,module,exports){
 module.exports = function () {
   throw new Error('Readable.from is not available in the browser')
 };
 
-},{}],84:[function(require,module,exports){
+},{}],66:[function(require,module,exports){
 // Ported from https://github.com/mafintosh/pump with
 // permission from the author, Mathias Buus (@mafintosh).
 'use strict';
@@ -34458,7 +29400,7 @@ function pipeline() {
 }
 
 module.exports = pipeline;
-},{"../../../errors":73,"./end-of-stream":82}],85:[function(require,module,exports){
+},{"../../../errors":55,"./end-of-stream":64}],67:[function(require,module,exports){
 'use strict';
 
 var ERR_INVALID_OPT_VALUE = require('../../../errors').codes.ERR_INVALID_OPT_VALUE;
@@ -34486,10 +29428,10 @@ function getHighWaterMark(state, options, duplexKey, isDuplex) {
 module.exports = {
   getHighWaterMark: getHighWaterMark
 };
-},{"../../../errors":73}],86:[function(require,module,exports){
+},{"../../../errors":55}],68:[function(require,module,exports){
 module.exports = require('events').EventEmitter;
 
-},{"events":30}],87:[function(require,module,exports){
+},{"events":12}],69:[function(require,module,exports){
 (function (global){(function (){
 var ClientRequest = require('./lib/request')
 var response = require('./lib/response')
@@ -34577,7 +29519,7 @@ http.METHODS = [
 	'UNSUBSCRIBE'
 ]
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./lib/request":89,"./lib/response":90,"builtin-status-codes":26,"url":112,"xtend":106}],88:[function(require,module,exports){
+},{"./lib/request":71,"./lib/response":72,"builtin-status-codes":8,"url":94,"xtend":88}],70:[function(require,module,exports){
 (function (global){(function (){
 exports.fetch = isFunction(global.fetch) && isFunction(global.ReadableStream)
 
@@ -34640,7 +29582,7 @@ function isFunction (value) {
 xhr = null // Help gc
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],89:[function(require,module,exports){
+},{}],71:[function(require,module,exports){
 (function (process,global,Buffer){(function (){
 var capability = require('./capability')
 var inherits = require('inherits')
@@ -34996,7 +29938,7 @@ var unsafeHeaders = [
 ]
 
 }).call(this)}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("buffer").Buffer)
-},{"./capability":88,"./response":90,"_process":66,"buffer":24,"inherits":56,"readable-stream":105}],90:[function(require,module,exports){
+},{"./capability":70,"./response":72,"_process":48,"buffer":6,"inherits":38,"readable-stream":87}],72:[function(require,module,exports){
 (function (process,global,Buffer){(function (){
 var capability = require('./capability')
 var inherits = require('inherits')
@@ -35211,35 +30153,35 @@ IncomingMessage.prototype._onXHRProgress = function (resetTimers) {
 }
 
 }).call(this)}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("buffer").Buffer)
-},{"./capability":88,"_process":66,"buffer":24,"inherits":56,"readable-stream":105}],91:[function(require,module,exports){
-arguments[4][73][0].apply(exports,arguments)
-},{"dup":73}],92:[function(require,module,exports){
-arguments[4][74][0].apply(exports,arguments)
-},{"./_stream_readable":94,"./_stream_writable":96,"_process":66,"dup":74,"inherits":56}],93:[function(require,module,exports){
-arguments[4][75][0].apply(exports,arguments)
-},{"./_stream_transform":95,"dup":75,"inherits":56}],94:[function(require,module,exports){
-arguments[4][76][0].apply(exports,arguments)
-},{"../errors":91,"./_stream_duplex":92,"./internal/streams/async_iterator":97,"./internal/streams/buffer_list":98,"./internal/streams/destroy":99,"./internal/streams/from":101,"./internal/streams/state":103,"./internal/streams/stream":104,"_process":66,"buffer":24,"dup":76,"events":30,"inherits":56,"string_decoder/":107,"util":22}],95:[function(require,module,exports){
-arguments[4][77][0].apply(exports,arguments)
-},{"../errors":91,"./_stream_duplex":92,"dup":77,"inherits":56}],96:[function(require,module,exports){
-arguments[4][78][0].apply(exports,arguments)
-},{"../errors":91,"./_stream_duplex":92,"./internal/streams/destroy":99,"./internal/streams/state":103,"./internal/streams/stream":104,"_process":66,"buffer":24,"dup":78,"inherits":56,"util-deprecate":115}],97:[function(require,module,exports){
-arguments[4][79][0].apply(exports,arguments)
-},{"./end-of-stream":100,"_process":66,"dup":79}],98:[function(require,module,exports){
-arguments[4][80][0].apply(exports,arguments)
-},{"buffer":24,"dup":80,"util":22}],99:[function(require,module,exports){
-arguments[4][81][0].apply(exports,arguments)
-},{"_process":66,"dup":81}],100:[function(require,module,exports){
-arguments[4][82][0].apply(exports,arguments)
-},{"../../../errors":91,"dup":82}],101:[function(require,module,exports){
-arguments[4][83][0].apply(exports,arguments)
-},{"dup":83}],102:[function(require,module,exports){
-arguments[4][84][0].apply(exports,arguments)
-},{"../../../errors":91,"./end-of-stream":100,"dup":84}],103:[function(require,module,exports){
-arguments[4][85][0].apply(exports,arguments)
-},{"../../../errors":91,"dup":85}],104:[function(require,module,exports){
-arguments[4][86][0].apply(exports,arguments)
-},{"dup":86,"events":30}],105:[function(require,module,exports){
+},{"./capability":70,"_process":48,"buffer":6,"inherits":38,"readable-stream":87}],73:[function(require,module,exports){
+arguments[4][55][0].apply(exports,arguments)
+},{"dup":55}],74:[function(require,module,exports){
+arguments[4][56][0].apply(exports,arguments)
+},{"./_stream_readable":76,"./_stream_writable":78,"_process":48,"dup":56,"inherits":38}],75:[function(require,module,exports){
+arguments[4][57][0].apply(exports,arguments)
+},{"./_stream_transform":77,"dup":57,"inherits":38}],76:[function(require,module,exports){
+arguments[4][58][0].apply(exports,arguments)
+},{"../errors":73,"./_stream_duplex":74,"./internal/streams/async_iterator":79,"./internal/streams/buffer_list":80,"./internal/streams/destroy":81,"./internal/streams/from":83,"./internal/streams/state":85,"./internal/streams/stream":86,"_process":48,"buffer":6,"dup":58,"events":12,"inherits":38,"string_decoder/":89,"util":4}],77:[function(require,module,exports){
+arguments[4][59][0].apply(exports,arguments)
+},{"../errors":73,"./_stream_duplex":74,"dup":59,"inherits":38}],78:[function(require,module,exports){
+arguments[4][60][0].apply(exports,arguments)
+},{"../errors":73,"./_stream_duplex":74,"./internal/streams/destroy":81,"./internal/streams/state":85,"./internal/streams/stream":86,"_process":48,"buffer":6,"dup":60,"inherits":38,"util-deprecate":97}],79:[function(require,module,exports){
+arguments[4][61][0].apply(exports,arguments)
+},{"./end-of-stream":82,"_process":48,"dup":61}],80:[function(require,module,exports){
+arguments[4][62][0].apply(exports,arguments)
+},{"buffer":6,"dup":62,"util":4}],81:[function(require,module,exports){
+arguments[4][63][0].apply(exports,arguments)
+},{"_process":48,"dup":63}],82:[function(require,module,exports){
+arguments[4][64][0].apply(exports,arguments)
+},{"../../../errors":73,"dup":64}],83:[function(require,module,exports){
+arguments[4][65][0].apply(exports,arguments)
+},{"dup":65}],84:[function(require,module,exports){
+arguments[4][66][0].apply(exports,arguments)
+},{"../../../errors":73,"./end-of-stream":82,"dup":66}],85:[function(require,module,exports){
+arguments[4][67][0].apply(exports,arguments)
+},{"../../../errors":73,"dup":67}],86:[function(require,module,exports){
+arguments[4][68][0].apply(exports,arguments)
+},{"dup":68,"events":12}],87:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Stream = exports;
 exports.Readable = exports;
@@ -35250,7 +30192,7 @@ exports.PassThrough = require('./lib/_stream_passthrough.js');
 exports.finished = require('./lib/internal/streams/end-of-stream.js');
 exports.pipeline = require('./lib/internal/streams/pipeline.js');
 
-},{"./lib/_stream_duplex.js":92,"./lib/_stream_passthrough.js":93,"./lib/_stream_readable.js":94,"./lib/_stream_transform.js":95,"./lib/_stream_writable.js":96,"./lib/internal/streams/end-of-stream.js":100,"./lib/internal/streams/pipeline.js":102}],106:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":74,"./lib/_stream_passthrough.js":75,"./lib/_stream_readable.js":76,"./lib/_stream_transform.js":77,"./lib/_stream_writable.js":78,"./lib/internal/streams/end-of-stream.js":82,"./lib/internal/streams/pipeline.js":84}],88:[function(require,module,exports){
 module.exports = extend
 
 var hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -35271,7 +30213,7 @@ function extend() {
     return target
 }
 
-},{}],107:[function(require,module,exports){
+},{}],89:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -35568,7 +30510,7 @@ function simpleWrite(buf) {
 function simpleEnd(buf) {
   return buf && buf.length ? this.write(buf) : '';
 }
-},{"safe-buffer":108}],108:[function(require,module,exports){
+},{"safe-buffer":90}],90:[function(require,module,exports){
 /* eslint-disable node/no-deprecated-api */
 var buffer = require('buffer')
 var Buffer = buffer.Buffer
@@ -35632,7 +30574,7 @@ SafeBuffer.allocUnsafeSlow = function (size) {
   return buffer.SlowBuffer(size)
 }
 
-},{"buffer":24}],109:[function(require,module,exports){
+},{"buffer":6}],91:[function(require,module,exports){
 (function (setImmediate,clearImmediate){(function (){
 var nextTick = require('process/browser.js').nextTick;
 var apply = Function.prototype.apply;
@@ -35711,14 +30653,14 @@ exports.clearImmediate = typeof clearImmediate === "function" ? clearImmediate :
   delete immediateIds[id];
 };
 }).call(this)}).call(this,require("timers").setImmediate,require("timers").clearImmediate)
-},{"process/browser.js":66,"timers":109}],110:[function(require,module,exports){
+},{"process/browser.js":48,"timers":91}],92:[function(require,module,exports){
 'use strict';
 
 var truncate = require("./lib/truncate");
 var getLength = require("utf8-byte-length/browser");
 module.exports = truncate.bind(null, getLength);
 
-},{"./lib/truncate":111,"utf8-byte-length/browser":114}],111:[function(require,module,exports){
+},{"./lib/truncate":93,"utf8-byte-length/browser":96}],93:[function(require,module,exports){
 'use strict';
 
 function isHighSurrogate(codePoint) {
@@ -35763,7 +30705,7 @@ module.exports = function truncate(getLength, string, byteLength) {
 };
 
 
-},{}],112:[function(require,module,exports){
+},{}],94:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -36497,7 +31439,7 @@ Url.prototype.parseHost = function() {
   if (host) this.hostname = host;
 };
 
-},{"./util":113,"punycode":25,"querystring":69}],113:[function(require,module,exports){
+},{"./util":95,"punycode":7,"querystring":51}],95:[function(require,module,exports){
 'use strict';
 
 module.exports = {
@@ -36515,7 +31457,7 @@ module.exports = {
   }
 };
 
-},{}],114:[function(require,module,exports){
+},{}],96:[function(require,module,exports){
 'use strict';
 
 function isHighSurrogate(codePoint) {
@@ -36564,7 +31506,7 @@ module.exports = function getByteLength(string) {
   return byteLength;
 };
 
-},{}],115:[function(require,module,exports){
+},{}],97:[function(require,module,exports){
 (function (global){(function (){
 
 /**
@@ -36635,14 +31577,14 @@ function config (name) {
 }
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],116:[function(require,module,exports){
+},{}],98:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],117:[function(require,module,exports){
+},{}],99:[function(require,module,exports){
 // Currently in sync with Node.js lib/internal/util/types.js
 // https://github.com/nodejs/node/commit/112cc7c27551254aa2b17098fb774867f05ed0d9
 
@@ -36978,7 +31920,7 @@ exports.isAnyArrayBuffer = isAnyArrayBuffer;
   });
 });
 
-},{"is-arguments":57,"is-generator-function":58,"is-typed-array":59,"which-typed-array":119}],118:[function(require,module,exports){
+},{"is-arguments":39,"is-generator-function":40,"is-typed-array":41,"which-typed-array":101}],100:[function(require,module,exports){
 (function (process){(function (){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -37697,7 +32639,7 @@ function callbackify(original) {
 exports.callbackify = callbackify;
 
 }).call(this)}).call(this,require('_process'))
-},{"./support/isBuffer":116,"./support/types":117,"_process":66,"inherits":56}],119:[function(require,module,exports){
+},{"./support/isBuffer":98,"./support/types":99,"_process":48,"inherits":38}],101:[function(require,module,exports){
 (function (global){(function (){
 'use strict';
 
@@ -37755,20 +32697,24 @@ module.exports = function whichTypedArray(value) {
 };
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"available-typed-arrays":20,"call-bind/callBound":27,"es-abstract/helpers/getOwnPropertyDescriptor":29,"foreach":46,"has-tostringtag/shams":52,"is-typed-array":59}],120:[function(require,module,exports){
+},{"available-typed-arrays":2,"call-bind/callBound":9,"es-abstract/helpers/getOwnPropertyDescriptor":11,"foreach":28,"has-tostringtag/shams":34,"is-typed-array":41}],102:[function(require,module,exports){
 'use strict'
 
-const fs = require('fs');
-const path = require('path');
+// const fs = require('fs');
+// const path = require('path');
+
+const fs = window.require('fs');
+const path = window.require('path');
 
 const async = require('async');
 const ffmpeg = require('fluent-ffmpeg');
 const speedometer = require('speedometer');
 const sanitize = require('sanitize-filename');
 
-const downloader = require('./../../lib/index');
+const downloader = require('./../../../lib/index.js');
 window.$ = window.jQuery = require('jquery');
 
+const isDevelopment = false;
 
 const setCardInfo = (info) => {
     const titleElement = document.querySelector('#vid-title');
@@ -37799,6 +32745,7 @@ const setCardInfo = (info) => {
                 setActionPanelActive(false);
                 setActionResultActive(true);
             
+                console.log(err);
                 setActionResult(`Failed: ${err.message}`, () => {
                     setActionPanelActive(true);
                     setActionLoaderActive(false);
@@ -37841,6 +32788,10 @@ const download = async (info, itag, outPath) => {
     metadata.artist = info.videoDetails.media.artist;
     metadata.author = info.videoDetails.author.name;
     metadata.description = info.videoDetails.description;
+
+    if(!fs.existsSync(outPath)) {
+        fs.mkdirSync(outPath);
+    }
 
     const tasks = [
         async function() {
@@ -37887,46 +32838,47 @@ const download = async (info, itag, outPath) => {
             await promise;
         },
         async function() {
-           const stream = await downloader.download(info, { quality: itag ? itag : 'highestvideo' });
-           stream.pipe(fs.createWriteStream(path.join(outPath, sanitize('v.mp4'))));
+            console.log(itag);
+            const stream = await downloader.download(info, { quality: itag ? itag : 'highestvideo' });
+            stream.pipe(fs.createWriteStream(path.join(outPath, sanitize('v.mp4'))));
 
-            var percentage = 0;
-            stream.on('progress', (chunkSize, downloaded, total) => {
-                downloadData.totalDownloaded += parseInt(chunkSize);
-                downloadData.delta += parseInt(chunkSize);
+                var percentage = 0;
+                stream.on('progress', (chunkSize, downloaded, total) => {
+                    downloadData.totalDownloaded += parseInt(chunkSize);
+                    downloadData.delta += parseInt(chunkSize);
 
-                percentage = (downloaded / total) * 100;
-                setProgressBarUpdate((totalPercentage + percentage) / maxPercentage);
-                // console.log((totalPercentage + percentage) + ' ' + maxPercentage + ' ' + ((totalPercentage + percentage) / maxPercentage));
+                    percentage = (downloaded / total) * 100;
+                    setProgressBarUpdate((totalPercentage + percentage) / maxPercentage);
+                    // console.log((totalPercentage + percentage) + ' ' + maxPercentage + ' ' + ((totalPercentage + percentage) / maxPercentage));
 
-                if(Date.now() >= nextUpdate) {
-                    downloadData.eta = Math.round(total - downloaded) / downloadData.speed(chunkSize);
+                    if(Date.now() >= nextUpdate) {
+                        downloadData.eta = Math.round(total - downloaded) / downloadData.speed(chunkSize);
 
-                    downloadData.delta = 0;
-                    nextUpdate = Date.now() + time;
-                }
-            });
-
-            stream.on('data', data => {});
-
-            stream.on('error', err => {
-                const error = {
-                    message: 'An error occured while downloading the video file.',
-                    error: err,
-                    payload: ''
-                }
-
-                return Promise.reject(error);
-            });
-
-            const promise = new Promise((resolve) => {
-                stream.on('end', () => {
-                    totalPercentage += percentage;
-                    resolve();
+                        downloadData.delta = 0;
+                        nextUpdate = Date.now() + time;
+                    }
                 });
-            });
 
-            await promise;
+                stream.on('data', data => {});
+
+                stream.on('error', err => {
+                    const error = {
+                        message: 'An error occured while downloading the video file.',
+                        error: err,
+                        payload: ''
+                    }
+
+                    return Promise.reject(error);
+                });
+
+                const promise = new Promise((resolve) => {
+                    stream.on('end', () => {
+                        totalPercentage += percentage;
+                        resolve();
+                    });
+                });
+
+                await promise;
         }
     ];
 
@@ -37962,9 +32914,9 @@ const download = async (info, itag, outPath) => {
 }
 
 const mergeMediaFiles = async (title, outPath, metadata) => {
-    const presetsPath = path.resolve('presets');
-    const ffmpegPath = path.resolve('../ffmpeg/bin/ffmpeg.exe');
-    const ffmpegProbePath = path.resolve('../ffmpeg/bin/ffprobe.exe');
+    const presetsPath = isDevelopment ? path.resolve('presets') : path.resolve('resources/app/presets');
+    const ffmpegPath = isDevelopment ? path.resolve('../ffmpeg/bin/ffmpeg.exe') : path.resolve('resources/app/ffmpeg/bin/ffmpeg.exe');
+    const ffmpegProbePath = isDevelopment ? path.resolve('../ffmpeg/bin/ffprobe.exe') : path.resolve('resources/app/ffmpeg/bin/ffprobe.exe');
 
     ffmpeg.setFfmpegPath(ffmpegPath);
     ffmpeg.setFfprobePath(ffmpegProbePath);
@@ -37972,6 +32924,9 @@ const mergeMediaFiles = async (title, outPath, metadata) => {
     const videoPath = path.join(outPath, 'v.mp4');
     const audioPath = path.join(outPath, 'a.mp4');
     const outputPath = path.join(outPath, sanitize(title + '.mp4'));
+
+    console.log(videoPath);
+    console.log(audioPath);
 
     var eta = 0;
     var speed = speedometer(5000);
@@ -37983,7 +32938,7 @@ const mergeMediaFiles = async (title, outPath, metadata) => {
 
     process.addInput(videoPath);
     process.addInput(audioPath);
-    // process.preset(self.options.preset);
+    process.preset('mid-res');
 
     const outputOptions = [
         '-id3v2_version', '4',
@@ -38125,4 +33080,5062 @@ window.addEventListener('DOMContentLoaded', e => {
 window.addEventListener('resize', () => {
     console.log(window.innerWidth + 'x' + window.innerHeight);
 });
-},{"./../../lib/index":1,"async":19,"fluent-ffmpeg":31,"fs":23,"jquery":63,"path":65,"sanitize-filename":70,"speedometer":71}]},{},[120]);
+},{"./../../../lib/index.js":103,"async":1,"fluent-ffmpeg":13,"jquery":45,"sanitize-filename":52,"speedometer":53}],103:[function(require,module,exports){
+'use strict'
+
+const ytdl = require('ytdl-core');
+
+module.exports = {
+    getURLInfo: async (url) => {
+        var info = null;
+
+        if(url && ytdl.validateURL(url)) {
+            try {
+                info = await ytdl.getInfo(url);
+            }
+            catch(err) {
+                const error = {
+                    function: 'getURLInfo', 
+                    message: 'Unable to get info from URL', 
+                    payload: err.message
+                };
+                
+                return Promise.reject(error);
+            }
+        }
+
+        return info;
+    },
+    getURLBasicInfo: async (url) => {
+        var info = null;
+
+        if(url && ytdl.validateURL(url)) {
+            try {
+                info = await ytdl.getBasicInfo(url);
+            }
+            catch(err) {
+                const error = {
+                    function: 'getURLBasicInfo', 
+                    message: 'Unable to get info from URL', 
+                    payload: err.message
+                };
+                
+                return Promise.reject(error);
+            }
+        }
+
+        return info; 
+    },
+    getVideoDetails: async (url) => {
+        var info = null;
+
+        if(url && ytdl.validateURL(url)) {
+            try {
+                info = await ytdl.getInfo(url);
+                return info = info.videoDetails;
+            }
+            catch(err) {
+                const error = {
+                    function: 'getURLInfoAsync', 
+                    message: 'Unable to get info from URL', 
+                    payload: err.message
+                };
+
+                return Promise.reject(error);
+            }
+        }
+
+        return info;
+    },
+    getAvailableQuality: (info) => {
+        var qualityList = [];
+        info.formats.forEach(i => {
+            if(i.qualityLabel && !qualityList.includes(i.qualityLabel)) {
+                qualityList.push({
+                    itag: i.itag,
+                    quality: i.qualityLabel,
+                    container: i.container
+                });
+            }
+        });
+
+        qualityList.sort((a, b) => parseInt(b.itag) - parseInt(a.itag));
+
+        var result = [];
+        qualityList.forEach(i => {
+            if(!result.some(e => e.quality === i.quality)) {
+                result.push(i);
+            }
+        });
+        
+        result.sort((a, b) => parseInt(b.quality) - parseInt(a.quality));
+
+        return result;
+    },
+    download: async (info, options) => {
+        var stream = null;
+
+        if(info) {
+            try {
+                stream = await ytdl.downloadFromInfo(info, options);
+            }
+            catch(err) {
+                const error = {
+                    function: 'download', 
+                    message: 'Unable to get info from URL', 
+                    payload: err.message
+                };
+
+                return Promise.reject(error);
+            }
+        }
+
+        return stream;
+    }
+};
+},{"ytdl-core":114}],104:[function(require,module,exports){
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const stream_1 = require("stream");
+const sax_1 = __importDefault(require("sax"));
+const parse_time_1 = require("./parse-time");
+/**
+ * A wrapper around sax that emits segments.
+ */
+class DashMPDParser extends stream_1.Writable {
+    constructor(targetID) {
+        super();
+        this._parser = sax_1.default.createStream(false, { lowercase: true });
+        this._parser.on('error', this.destroy.bind(this));
+        let lastTag;
+        let currtime = 0;
+        let seq = 0;
+        let segmentTemplate;
+        let timescale, offset, duration, baseURL;
+        let timeline = [];
+        let getSegments = false;
+        let gotSegments = false;
+        let isStatic;
+        let treeLevel;
+        let periodStart;
+        const tmpl = (str) => {
+            const context = {
+                RepresentationID: targetID,
+                Number: seq,
+                Time: currtime,
+            };
+            return str.replace(/\$(\w+)\$/g, (m, p1) => `${context[p1]}`);
+        };
+        this._parser.on('opentag', node => {
+            switch (node.name) {
+                case 'mpd':
+                    currtime =
+                        node.attributes.availabilitystarttime ?
+                            new Date(node.attributes.availabilitystarttime).getTime() : 0;
+                    isStatic = node.attributes.type !== 'dynamic';
+                    break;
+                case 'period':
+                    // Reset everything on <Period> tag.
+                    seq = 0;
+                    timescale = 1000;
+                    duration = 0;
+                    offset = 0;
+                    baseURL = [];
+                    treeLevel = 0;
+                    periodStart = parse_time_1.durationStr(node.attributes.start) || 0;
+                    break;
+                case 'segmentlist':
+                    seq = parseInt(node.attributes.startnumber) || seq;
+                    timescale = parseInt(node.attributes.timescale) || timescale;
+                    duration = parseInt(node.attributes.duration) || duration;
+                    offset = parseInt(node.attributes.presentationtimeoffset) || offset;
+                    break;
+                case 'segmenttemplate':
+                    segmentTemplate = node.attributes;
+                    seq = parseInt(node.attributes.startnumber) || seq;
+                    timescale = parseInt(node.attributes.timescale) || timescale;
+                    break;
+                case 'segmenttimeline':
+                case 'baseurl':
+                    lastTag = node.name;
+                    break;
+                case 's':
+                    timeline.push({
+                        duration: parseInt(node.attributes.d),
+                        repeat: parseInt(node.attributes.r),
+                        time: parseInt(node.attributes.t),
+                    });
+                    break;
+                case 'adaptationset':
+                case 'representation':
+                    treeLevel++;
+                    if (!targetID) {
+                        targetID = node.attributes.id;
+                    }
+                    getSegments = node.attributes.id === `${targetID}`;
+                    if (getSegments) {
+                        if (periodStart) {
+                            currtime += periodStart;
+                        }
+                        if (offset) {
+                            currtime -= offset / timescale * 1000;
+                        }
+                        this.emit('starttime', currtime);
+                    }
+                    break;
+                case 'initialization':
+                    if (getSegments) {
+                        this.emit('item', {
+                            url: baseURL.filter(s => !!s).join('') + node.attributes.sourceurl,
+                            seq: seq,
+                            init: true,
+                            duration: 0,
+                        });
+                    }
+                    break;
+                case 'segmenturl':
+                    if (getSegments) {
+                        gotSegments = true;
+                        let tl = timeline.shift();
+                        let segmentDuration = ((tl === null || tl === void 0 ? void 0 : tl.duration) || duration) / timescale * 1000;
+                        this.emit('item', {
+                            url: baseURL.filter(s => !!s).join('') + node.attributes.media,
+                            seq: seq++,
+                            duration: segmentDuration,
+                        });
+                        currtime += segmentDuration;
+                    }
+                    break;
+            }
+        });
+        const onEnd = () => {
+            if (isStatic) {
+                this.emit('endlist');
+            }
+            if (!getSegments) {
+                this.destroy(Error(`Representation '${targetID}' not found`));
+            }
+            else {
+                this.emit('end');
+            }
+        };
+        this._parser.on('closetag', tagName => {
+            switch (tagName) {
+                case 'adaptationset':
+                case 'representation':
+                    treeLevel--;
+                    if (segmentTemplate && timeline.length) {
+                        gotSegments = true;
+                        if (segmentTemplate.initialization) {
+                            this.emit('item', {
+                                url: baseURL.filter(s => !!s).join('') +
+                                    tmpl(segmentTemplate.initialization),
+                                seq: seq,
+                                init: true,
+                                duration: 0,
+                            });
+                        }
+                        for (let { duration: itemDuration, repeat, time } of timeline) {
+                            itemDuration = itemDuration / timescale * 1000;
+                            repeat = repeat || 1;
+                            currtime = time || currtime;
+                            for (let i = 0; i < repeat; i++) {
+                                this.emit('item', {
+                                    url: baseURL.filter(s => !!s).join('') +
+                                        tmpl(segmentTemplate.media),
+                                    seq: seq++,
+                                    duration: itemDuration,
+                                });
+                                currtime += itemDuration;
+                            }
+                        }
+                    }
+                    if (gotSegments) {
+                        this.emit('endearly');
+                        onEnd();
+                        this._parser.removeAllListeners();
+                        this.removeAllListeners('finish');
+                    }
+                    break;
+            }
+        });
+        this._parser.on('text', text => {
+            if (lastTag === 'baseurl') {
+                baseURL[treeLevel] = text;
+                lastTag = null;
+            }
+        });
+        this.on('finish', onEnd);
+    }
+    _write(chunk, encoding, callback) {
+        this._parser.write(chunk, encoding);
+        callback();
+    }
+}
+exports.default = DashMPDParser;
+
+},{"./parse-time":107,"sax":110,"stream":54}],105:[function(require,module,exports){
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+const stream_1 = require("stream");
+const miniget_1 = __importDefault(require("miniget"));
+const m3u8_parser_1 = __importDefault(require("./m3u8-parser"));
+const dash_mpd_parser_1 = __importDefault(require("./dash-mpd-parser"));
+const queue_1 = require("./queue");
+const parse_time_1 = require("./parse-time");
+const supportedParsers = {
+    m3u8: m3u8_parser_1.default,
+    'dash-mpd': dash_mpd_parser_1.default,
+};
+let m3u8stream = ((playlistURL, options = {}) => {
+    const stream = new stream_1.PassThrough();
+    const chunkReadahead = options.chunkReadahead || 3;
+    // 20 seconds.
+    const liveBuffer = options.liveBuffer || 20000;
+    const requestOptions = options.requestOptions;
+    const Parser = supportedParsers[options.parser || (/\.mpd$/.test(playlistURL) ? 'dash-mpd' : 'm3u8')];
+    if (!Parser) {
+        throw TypeError(`parser '${options.parser}' not supported`);
+    }
+    let begin = 0;
+    if (typeof options.begin !== 'undefined') {
+        begin = typeof options.begin === 'string' ?
+            parse_time_1.humanStr(options.begin) :
+            Math.max(options.begin - liveBuffer, 0);
+    }
+    const forwardEvents = (req) => {
+        for (let event of ['abort', 'request', 'response', 'redirect', 'retry', 'reconnect']) {
+            req.on(event, stream.emit.bind(stream, event));
+        }
+    };
+    let currSegment;
+    const streamQueue = new queue_1.Queue((req, callback) => {
+        currSegment = req;
+        // Count the size manually, since the `content-length` header is not
+        // always there.
+        let size = 0;
+        req.on('data', (chunk) => size += chunk.length);
+        req.pipe(stream, { end: false });
+        req.on('end', () => callback(null, size));
+    }, { concurrency: 1 });
+    let segmentNumber = 0;
+    let downloaded = 0;
+    const requestQueue = new queue_1.Queue((segment, callback) => {
+        let reqOptions = Object.assign({}, requestOptions);
+        if (segment.range) {
+            reqOptions.headers = Object.assign({}, reqOptions.headers, {
+                Range: `bytes=${segment.range.start}-${segment.range.end}`,
+            });
+        }
+        let req = miniget_1.default(new URL(segment.url, playlistURL).toString(), reqOptions);
+        req.on('error', callback);
+        forwardEvents(req);
+        streamQueue.push(req, (_, size) => {
+            downloaded += +size;
+            stream.emit('progress', {
+                num: ++segmentNumber,
+                size: size,
+                duration: segment.duration,
+                url: segment.url,
+            }, requestQueue.total, downloaded);
+            callback(null);
+        });
+    }, { concurrency: chunkReadahead });
+    const onError = (err) => {
+        if (ended) {
+            return;
+        }
+        stream.emit('error', err);
+        // Stop on any error.
+        stream.end();
+    };
+    // When to look for items again.
+    let refreshThreshold;
+    let minRefreshTime;
+    let refreshTimeout;
+    let fetchingPlaylist = true;
+    let ended = false;
+    let isStatic = false;
+    let lastRefresh;
+    const onQueuedEnd = (err) => {
+        currSegment = null;
+        if (err) {
+            onError(err);
+        }
+        else if (!fetchingPlaylist && !ended && !isStatic &&
+            requestQueue.tasks.length + requestQueue.active <= refreshThreshold) {
+            let ms = Math.max(0, minRefreshTime - (Date.now() - lastRefresh));
+            fetchingPlaylist = true;
+            refreshTimeout = setTimeout(refreshPlaylist, ms);
+        }
+        else if ((ended || isStatic) &&
+            !requestQueue.tasks.length && !requestQueue.active) {
+            stream.end();
+        }
+    };
+    let currPlaylist;
+    let lastSeq;
+    let starttime = 0;
+    const refreshPlaylist = () => {
+        lastRefresh = Date.now();
+        currPlaylist = miniget_1.default(playlistURL, requestOptions);
+        currPlaylist.on('error', onError);
+        forwardEvents(currPlaylist);
+        const parser = currPlaylist.pipe(new Parser(options.id));
+        parser.on('starttime', (a) => {
+            if (starttime) {
+                return;
+            }
+            starttime = a;
+            if (typeof options.begin === 'string' && begin >= 0) {
+                begin += starttime;
+            }
+        });
+        parser.on('endlist', () => { isStatic = true; });
+        parser.on('endearly', currPlaylist.unpipe.bind(currPlaylist, parser));
+        let addedItems = [];
+        const addItem = (item) => {
+            if (!item.init) {
+                if (item.seq <= lastSeq) {
+                    return;
+                }
+                lastSeq = item.seq;
+            }
+            begin = item.time;
+            requestQueue.push(item, onQueuedEnd);
+            addedItems.push(item);
+        };
+        let tailedItems = [], tailedItemsDuration = 0;
+        parser.on('item', (item) => {
+            let timedItem = Object.assign({ time: starttime }, item);
+            if (begin <= timedItem.time) {
+                addItem(timedItem);
+            }
+            else {
+                tailedItems.push(timedItem);
+                tailedItemsDuration += timedItem.duration;
+                // Only keep the last `liveBuffer` of items.
+                while (tailedItems.length > 1 &&
+                    tailedItemsDuration - tailedItems[0].duration > liveBuffer) {
+                    const lastItem = tailedItems.shift();
+                    tailedItemsDuration -= lastItem.duration;
+                }
+            }
+            starttime += timedItem.duration;
+        });
+        parser.on('end', () => {
+            currPlaylist = null;
+            // If we are too ahead of the stream, make sure to get the
+            // latest available items with a small buffer.
+            if (!addedItems.length && tailedItems.length) {
+                tailedItems.forEach(item => { addItem(item); });
+            }
+            // Refresh the playlist when remaining segments get low.
+            refreshThreshold = Math.max(1, Math.ceil(addedItems.length * 0.01));
+            // Throttle refreshing the playlist by looking at the duration
+            // of live items added on this refresh.
+            minRefreshTime =
+                addedItems.reduce((total, item) => item.duration + total, 0);
+            fetchingPlaylist = false;
+            onQueuedEnd(null);
+        });
+    };
+    refreshPlaylist();
+    stream.end = () => {
+        ended = true;
+        streamQueue.die();
+        requestQueue.die();
+        clearTimeout(refreshTimeout);
+        currPlaylist === null || currPlaylist === void 0 ? void 0 : currPlaylist.destroy();
+        currSegment === null || currSegment === void 0 ? void 0 : currSegment.destroy();
+        stream_1.PassThrough.prototype.end.call(stream, null);
+    };
+    return stream;
+});
+m3u8stream.parseTimestamp = parse_time_1.humanStr;
+module.exports = m3u8stream;
+
+},{"./dash-mpd-parser":104,"./m3u8-parser":106,"./parse-time":107,"./queue":108,"miniget":109,"stream":54}],106:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const stream_1 = require("stream");
+/**
+ * A very simple m3u8 playlist file parser that detects tags and segments.
+ */
+class m3u8Parser extends stream_1.Writable {
+    constructor() {
+        super();
+        this._lastLine = '';
+        this._seq = 0;
+        this._nextItemDuration = null;
+        this._nextItemRange = null;
+        this._lastItemRangeEnd = 0;
+        this.on('finish', () => {
+            this._parseLine(this._lastLine);
+            this.emit('end');
+        });
+    }
+    _parseAttrList(value) {
+        let attrs = {};
+        let regex = /([A-Z0-9-]+)=(?:"([^"]*?)"|([^,]*?))/g;
+        let match;
+        while ((match = regex.exec(value)) !== null) {
+            attrs[match[1]] = match[2] || match[3];
+        }
+        return attrs;
+    }
+    _parseRange(value) {
+        if (!value)
+            return null;
+        let svalue = value.split('@');
+        let start = svalue[1] ? parseInt(svalue[1]) : this._lastItemRangeEnd + 1;
+        let end = start + parseInt(svalue[0]) - 1;
+        let range = { start, end };
+        this._lastItemRangeEnd = range.end;
+        return range;
+    }
+    _parseLine(line) {
+        let match = line.match(/^#(EXT[A-Z0-9-]+)(?::(.*))?/);
+        if (match) {
+            // This is a tag.
+            const tag = match[1];
+            const value = match[2] || '';
+            switch (tag) {
+                case 'EXT-X-PROGRAM-DATE-TIME':
+                    this.emit('starttime', new Date(value).getTime());
+                    break;
+                case 'EXT-X-MEDIA-SEQUENCE':
+                    this._seq = parseInt(value);
+                    break;
+                case 'EXT-X-MAP': {
+                    let attrs = this._parseAttrList(value);
+                    if (!attrs.URI) {
+                        this.destroy(new Error('`EXT-X-MAP` found without required attribute `URI`'));
+                        return;
+                    }
+                    this.emit('item', {
+                        url: attrs.URI,
+                        seq: this._seq,
+                        init: true,
+                        duration: 0,
+                        range: this._parseRange(attrs.BYTERANGE),
+                    });
+                    break;
+                }
+                case 'EXT-X-BYTERANGE': {
+                    this._nextItemRange = this._parseRange(value);
+                    break;
+                }
+                case 'EXTINF':
+                    this._nextItemDuration =
+                        Math.round(parseFloat(value.split(',')[0]) * 1000);
+                    break;
+                case 'EXT-X-ENDLIST':
+                    this.emit('endlist');
+                    break;
+            }
+        }
+        else if (!/^#/.test(line) && line.trim()) {
+            // This is a segment
+            this.emit('item', {
+                url: line.trim(),
+                seq: this._seq++,
+                duration: this._nextItemDuration,
+                range: this._nextItemRange,
+            });
+            this._nextItemRange = null;
+        }
+    }
+    _write(chunk, encoding, callback) {
+        let lines = chunk.toString('utf8').split('\n');
+        if (this._lastLine) {
+            lines[0] = this._lastLine + lines[0];
+        }
+        lines.forEach((line, i) => {
+            if (this.destroyed)
+                return;
+            if (i < lines.length - 1) {
+                this._parseLine(line);
+            }
+            else {
+                // Save the last line in case it has been broken up.
+                this._lastLine = line;
+            }
+        });
+        callback();
+    }
+}
+exports.default = m3u8Parser;
+
+},{"stream":54}],107:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.durationStr = exports.humanStr = void 0;
+const numberFormat = /^\d+$/;
+const timeFormat = /^(?:(?:(\d+):)?(\d{1,2}):)?(\d{1,2})(?:\.(\d{3}))?$/;
+const timeUnits = {
+    ms: 1,
+    s: 1000,
+    m: 60000,
+    h: 3600000,
+};
+/**
+ * Converts human friendly time to milliseconds. Supports the format
+ * 00:00:00.000 for hours, minutes, seconds, and milliseconds respectively.
+ * And 0ms, 0s, 0m, 0h, and together 1m1s.
+ *
+ * @param {number|string} time
+ * @returns {number}
+ */
+exports.humanStr = (time) => {
+    if (typeof time === 'number') {
+        return time;
+    }
+    if (numberFormat.test(time)) {
+        return +time;
+    }
+    const firstFormat = timeFormat.exec(time);
+    if (firstFormat) {
+        return (+(firstFormat[1] || 0) * timeUnits.h) +
+            (+(firstFormat[2] || 0) * timeUnits.m) +
+            (+firstFormat[3] * timeUnits.s) +
+            +(firstFormat[4] || 0);
+    }
+    else {
+        let total = 0;
+        const r = /(-?\d+)(ms|s|m|h)/g;
+        let rs;
+        while ((rs = r.exec(time)) !== null) {
+            total += +rs[1] * timeUnits[rs[2]];
+        }
+        return total;
+    }
+};
+/**
+ * Parses a duration string in the form of "123.456S", returns milliseconds.
+ *
+ * @param {string} time
+ * @returns {number}
+ */
+exports.durationStr = (time) => {
+    let total = 0;
+    const r = /(\d+(?:\.\d+)?)(S|M|H)/g;
+    let rs;
+    while ((rs = r.exec(time)) !== null) {
+        total += +rs[1] * timeUnits[rs[2].toLowerCase()];
+    }
+    return total;
+};
+
+},{}],108:[function(require,module,exports){
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Queue = void 0;
+class Queue {
+    /**
+     * A really simple queue with concurrency.
+     *
+     * @param {Function} worker
+     * @param {Object} options
+     * @param {!number} options.concurrency
+     */
+    constructor(worker, options = {}) {
+        this._worker = worker;
+        this._concurrency = options.concurrency || 1;
+        this.tasks = [];
+        this.total = 0;
+        this.active = 0;
+    }
+    /**
+     * Push a task to the queue.
+     *
+     *  @param {T} item
+     *  @param {!Function} callback
+     */
+    push(item, callback) {
+        this.tasks.push({ item, callback });
+        this.total++;
+        this._next();
+    }
+    /**
+     * Process next job in queue.
+     */
+    _next() {
+        if (this.active >= this._concurrency || !this.tasks.length) {
+            return;
+        }
+        const { item, callback } = this.tasks.shift();
+        let callbackCalled = false;
+        this.active++;
+        this._worker(item, (err, result) => {
+            if (callbackCalled) {
+                return;
+            }
+            this.active--;
+            callbackCalled = true;
+            callback === null || callback === void 0 ? void 0 : callback(err, result);
+            this._next();
+        });
+    }
+    /**
+     * Stops processing queued jobs.
+     */
+    die() {
+        this.tasks = [];
+    }
+}
+exports.Queue = Queue;
+
+},{}],109:[function(require,module,exports){
+(function (process){(function (){
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+const http_1 = __importDefault(require("http"));
+const https_1 = __importDefault(require("https"));
+const stream_1 = require("stream");
+const httpLibs = { 'http:': http_1.default, 'https:': https_1.default };
+const redirectStatusCodes = new Set([301, 302, 303, 307, 308]);
+const retryStatusCodes = new Set([429, 503]);
+// `request`, `response`, `abort`, left out, miniget will emit these.
+const requestEvents = ['connect', 'continue', 'information', 'socket', 'timeout', 'upgrade'];
+const responseEvents = ['aborted'];
+Miniget.MinigetError = class MinigetError extends Error {
+    constructor(message, statusCode) {
+        super(message);
+        this.statusCode = statusCode;
+    }
+};
+Miniget.defaultOptions = {
+    maxRedirects: 10,
+    maxRetries: 2,
+    maxReconnects: 0,
+    backoff: { inc: 100, max: 10000 },
+};
+function Miniget(url, options = {}) {
+    var _a;
+    const opts = Object.assign({}, Miniget.defaultOptions, options);
+    const stream = new stream_1.PassThrough({ highWaterMark: opts.highWaterMark });
+    stream.destroyed = stream.aborted = false;
+    let activeRequest;
+    let activeResponse;
+    let activeDecodedStream;
+    let redirects = 0;
+    let retries = 0;
+    let retryTimeout;
+    let reconnects = 0;
+    let contentLength;
+    let acceptRanges = false;
+    let rangeStart = 0, rangeEnd;
+    let downloaded = 0;
+    // Check if this is a ranged request.
+    if ((_a = opts.headers) === null || _a === void 0 ? void 0 : _a.Range) {
+        let r = /bytes=(\d+)-(\d+)?/.exec(`${opts.headers.Range}`);
+        if (r) {
+            rangeStart = parseInt(r[1], 10);
+            rangeEnd = parseInt(r[2], 10);
+        }
+    }
+    // Add `Accept-Encoding` header.
+    if (opts.acceptEncoding) {
+        opts.headers = Object.assign({
+            'Accept-Encoding': Object.keys(opts.acceptEncoding).join(', '),
+        }, opts.headers);
+    }
+    const downloadHasStarted = () => activeDecodedStream && downloaded > 0;
+    const downloadComplete = () => !acceptRanges || downloaded === contentLength;
+    const reconnect = (err) => {
+        activeDecodedStream = null;
+        retries = 0;
+        let inc = opts.backoff.inc;
+        let ms = Math.min(inc, opts.backoff.max);
+        retryTimeout = setTimeout(doDownload, ms);
+        stream.emit('reconnect', reconnects, err);
+    };
+    const reconnectIfEndedEarly = (err) => {
+        if (options.method !== 'HEAD' && !downloadComplete() && reconnects++ < opts.maxReconnects) {
+            reconnect(err);
+            return true;
+        }
+        return false;
+    };
+    const retryRequest = (retryOptions) => {
+        if (stream.destroyed) {
+            return false;
+        }
+        if (downloadHasStarted()) {
+            return reconnectIfEndedEarly(retryOptions.err);
+        }
+        else if ((!retryOptions.err || retryOptions.err.message === 'ENOTFOUND') &&
+            retries++ < opts.maxRetries) {
+            let ms = retryOptions.retryAfter ||
+                Math.min(retries * opts.backoff.inc, opts.backoff.max);
+            retryTimeout = setTimeout(doDownload, ms);
+            stream.emit('retry', retries, retryOptions.err);
+            return true;
+        }
+        return false;
+    };
+    const forwardEvents = (ee, events) => {
+        for (let event of events) {
+            ee.on(event, stream.emit.bind(stream, event));
+        }
+    };
+    const doDownload = () => {
+        let parsed = {}, httpLib;
+        try {
+            let urlObj = typeof url === 'string' ? new URL(url) : url;
+            parsed = Object.assign({}, {
+                host: urlObj.host,
+                hostname: urlObj.hostname,
+                path: urlObj.pathname + urlObj.search + urlObj.hash,
+                port: urlObj.port,
+                protocol: urlObj.protocol,
+            });
+            if (urlObj.username) {
+                parsed.auth = `${urlObj.username}:${urlObj.password}`;
+            }
+            httpLib = httpLibs[String(parsed.protocol)];
+        }
+        catch (err) {
+            // Let the error be caught by the if statement below.
+        }
+        if (!httpLib) {
+            stream.emit('error', new Miniget.MinigetError(`Invalid URL: ${url}`));
+            return;
+        }
+        Object.assign(parsed, opts);
+        if (acceptRanges && downloaded > 0) {
+            let start = downloaded + rangeStart;
+            let end = rangeEnd || '';
+            parsed.headers = Object.assign({}, parsed.headers, {
+                Range: `bytes=${start}-${end}`,
+            });
+        }
+        if (opts.transform) {
+            try {
+                parsed = opts.transform(parsed);
+            }
+            catch (err) {
+                stream.emit('error', err);
+                return;
+            }
+            if (!parsed || parsed.protocol) {
+                httpLib = httpLibs[String(parsed === null || parsed === void 0 ? void 0 : parsed.protocol)];
+                if (!httpLib) {
+                    stream.emit('error', new Miniget.MinigetError('Invalid URL object from `transform` function'));
+                    return;
+                }
+            }
+        }
+        const onError = (err) => {
+            if (stream.destroyed || stream.readableEnded) {
+                return;
+            }
+            // Needed for node v10.
+            if (stream._readableState.ended) {
+                return;
+            }
+            cleanup();
+            if (!retryRequest({ err })) {
+                stream.emit('error', err);
+            }
+            else {
+                activeRequest.removeListener('close', onRequestClose);
+            }
+        };
+        const onRequestClose = () => {
+            cleanup();
+            retryRequest({});
+        };
+        const cleanup = () => {
+            activeRequest.removeListener('close', onRequestClose);
+            activeResponse === null || activeResponse === void 0 ? void 0 : activeResponse.removeListener('data', onData);
+            activeDecodedStream === null || activeDecodedStream === void 0 ? void 0 : activeDecodedStream.removeListener('end', onEnd);
+        };
+        const onData = (chunk) => { downloaded += chunk.length; };
+        const onEnd = () => {
+            cleanup();
+            if (!reconnectIfEndedEarly()) {
+                stream.end();
+            }
+        };
+        activeRequest = httpLib.request(parsed, (res) => {
+            // Needed for node v10, v12.
+            // istanbul ignore next
+            if (stream.destroyed) {
+                return;
+            }
+            if (redirectStatusCodes.has(res.statusCode)) {
+                if (redirects++ >= opts.maxRedirects) {
+                    stream.emit('error', new Miniget.MinigetError('Too many redirects'));
+                }
+                else {
+                    if (res.headers.location) {
+                        url = res.headers.location;
+                    }
+                    else {
+                        let err = new Miniget.MinigetError('Redirect status code given with no location', res.statusCode);
+                        stream.emit('error', err);
+                        cleanup();
+                        return;
+                    }
+                    setTimeout(doDownload, parseInt(res.headers['retry-after'] || '0', 10) * 1000);
+                    stream.emit('redirect', url);
+                }
+                cleanup();
+                return;
+                // Check for rate limiting.
+            }
+            else if (retryStatusCodes.has(res.statusCode)) {
+                if (!retryRequest({ retryAfter: parseInt(res.headers['retry-after'] || '0', 10) })) {
+                    let err = new Miniget.MinigetError(`Status code: ${res.statusCode}`, res.statusCode);
+                    stream.emit('error', err);
+                }
+                cleanup();
+                return;
+            }
+            else if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 400)) {
+                let err = new Miniget.MinigetError(`Status code: ${res.statusCode}`, res.statusCode);
+                if (res.statusCode >= 500) {
+                    onError(err);
+                }
+                else {
+                    stream.emit('error', err);
+                }
+                cleanup();
+                return;
+            }
+            activeDecodedStream = res;
+            if (opts.acceptEncoding && res.headers['content-encoding']) {
+                for (let enc of res.headers['content-encoding'].split(', ').reverse()) {
+                    let fn = opts.acceptEncoding[enc];
+                    if (fn) {
+                        activeDecodedStream = activeDecodedStream.pipe(fn());
+                        activeDecodedStream.on('error', onError);
+                    }
+                }
+            }
+            if (!contentLength) {
+                contentLength = parseInt(`${res.headers['content-length']}`, 10);
+                acceptRanges = res.headers['accept-ranges'] === 'bytes' &&
+                    contentLength > 0 && opts.maxReconnects > 0;
+            }
+            res.on('data', onData);
+            activeDecodedStream.on('end', onEnd);
+            activeDecodedStream.pipe(stream, { end: !acceptRanges });
+            activeResponse = res;
+            stream.emit('response', res);
+            res.on('error', onError);
+            forwardEvents(res, responseEvents);
+        });
+        activeRequest.on('error', onError);
+        activeRequest.on('close', onRequestClose);
+        forwardEvents(activeRequest, requestEvents);
+        if (stream.destroyed) {
+            streamDestroy(...destroyArgs);
+        }
+        stream.emit('request', activeRequest);
+        activeRequest.end();
+    };
+    stream.abort = (err) => {
+        console.warn('`MinigetStream#abort()` has been deprecated in favor of `MinigetStream#destroy()`');
+        stream.aborted = true;
+        stream.emit('abort');
+        stream.destroy(err);
+    };
+    let destroyArgs;
+    const streamDestroy = (err) => {
+        activeRequest.destroy(err);
+        activeDecodedStream === null || activeDecodedStream === void 0 ? void 0 : activeDecodedStream.unpipe(stream);
+        activeDecodedStream === null || activeDecodedStream === void 0 ? void 0 : activeDecodedStream.destroy();
+        clearTimeout(retryTimeout);
+    };
+    stream._destroy = (...args) => {
+        stream.destroyed = true;
+        if (activeRequest) {
+            streamDestroy(...args);
+        }
+        else {
+            destroyArgs = args;
+        }
+    };
+    stream.text = () => new Promise((resolve, reject) => {
+        let body = '';
+        stream.setEncoding('utf8');
+        stream.on('data', chunk => body += chunk);
+        stream.on('end', () => resolve(body));
+        stream.on('error', reject);
+    });
+    process.nextTick(doDownload);
+    return stream;
+}
+module.exports = Miniget;
+
+}).call(this)}).call(this,require('_process'))
+},{"_process":48,"http":69,"https":36,"stream":54}],110:[function(require,module,exports){
+(function (Buffer){(function (){
+;(function (sax) { // wrapper for non-node envs
+  sax.parser = function (strict, opt) { return new SAXParser(strict, opt) }
+  sax.SAXParser = SAXParser
+  sax.SAXStream = SAXStream
+  sax.createStream = createStream
+
+  // When we pass the MAX_BUFFER_LENGTH position, start checking for buffer overruns.
+  // When we check, schedule the next check for MAX_BUFFER_LENGTH - (max(buffer lengths)),
+  // since that's the earliest that a buffer overrun could occur.  This way, checks are
+  // as rare as required, but as often as necessary to ensure never crossing this bound.
+  // Furthermore, buffers are only tested at most once per write(), so passing a very
+  // large string into write() might have undesirable effects, but this is manageable by
+  // the caller, so it is assumed to be safe.  Thus, a call to write() may, in the extreme
+  // edge case, result in creating at most one complete copy of the string passed in.
+  // Set to Infinity to have unlimited buffers.
+  sax.MAX_BUFFER_LENGTH = 64 * 1024
+
+  var buffers = [
+    'comment', 'sgmlDecl', 'textNode', 'tagName', 'doctype',
+    'procInstName', 'procInstBody', 'entity', 'attribName',
+    'attribValue', 'cdata', 'script'
+  ]
+
+  sax.EVENTS = [
+    'text',
+    'processinginstruction',
+    'sgmldeclaration',
+    'doctype',
+    'comment',
+    'opentagstart',
+    'attribute',
+    'opentag',
+    'closetag',
+    'opencdata',
+    'cdata',
+    'closecdata',
+    'error',
+    'end',
+    'ready',
+    'script',
+    'opennamespace',
+    'closenamespace'
+  ]
+
+  function SAXParser (strict, opt) {
+    if (!(this instanceof SAXParser)) {
+      return new SAXParser(strict, opt)
+    }
+
+    var parser = this
+    clearBuffers(parser)
+    parser.q = parser.c = ''
+    parser.bufferCheckPosition = sax.MAX_BUFFER_LENGTH
+    parser.opt = opt || {}
+    parser.opt.lowercase = parser.opt.lowercase || parser.opt.lowercasetags
+    parser.looseCase = parser.opt.lowercase ? 'toLowerCase' : 'toUpperCase'
+    parser.tags = []
+    parser.closed = parser.closedRoot = parser.sawRoot = false
+    parser.tag = parser.error = null
+    parser.strict = !!strict
+    parser.noscript = !!(strict || parser.opt.noscript)
+    parser.state = S.BEGIN
+    parser.strictEntities = parser.opt.strictEntities
+    parser.ENTITIES = parser.strictEntities ? Object.create(sax.XML_ENTITIES) : Object.create(sax.ENTITIES)
+    parser.attribList = []
+
+    // namespaces form a prototype chain.
+    // it always points at the current tag,
+    // which protos to its parent tag.
+    if (parser.opt.xmlns) {
+      parser.ns = Object.create(rootNS)
+    }
+
+    // mostly just for error reporting
+    parser.trackPosition = parser.opt.position !== false
+    if (parser.trackPosition) {
+      parser.position = parser.line = parser.column = 0
+    }
+    emit(parser, 'onready')
+  }
+
+  if (!Object.create) {
+    Object.create = function (o) {
+      function F () {}
+      F.prototype = o
+      var newf = new F()
+      return newf
+    }
+  }
+
+  if (!Object.keys) {
+    Object.keys = function (o) {
+      var a = []
+      for (var i in o) if (o.hasOwnProperty(i)) a.push(i)
+      return a
+    }
+  }
+
+  function checkBufferLength (parser) {
+    var maxAllowed = Math.max(sax.MAX_BUFFER_LENGTH, 10)
+    var maxActual = 0
+    for (var i = 0, l = buffers.length; i < l; i++) {
+      var len = parser[buffers[i]].length
+      if (len > maxAllowed) {
+        // Text/cdata nodes can get big, and since they're buffered,
+        // we can get here under normal conditions.
+        // Avoid issues by emitting the text node now,
+        // so at least it won't get any bigger.
+        switch (buffers[i]) {
+          case 'textNode':
+            closeText(parser)
+            break
+
+          case 'cdata':
+            emitNode(parser, 'oncdata', parser.cdata)
+            parser.cdata = ''
+            break
+
+          case 'script':
+            emitNode(parser, 'onscript', parser.script)
+            parser.script = ''
+            break
+
+          default:
+            error(parser, 'Max buffer length exceeded: ' + buffers[i])
+        }
+      }
+      maxActual = Math.max(maxActual, len)
+    }
+    // schedule the next check for the earliest possible buffer overrun.
+    var m = sax.MAX_BUFFER_LENGTH - maxActual
+    parser.bufferCheckPosition = m + parser.position
+  }
+
+  function clearBuffers (parser) {
+    for (var i = 0, l = buffers.length; i < l; i++) {
+      parser[buffers[i]] = ''
+    }
+  }
+
+  function flushBuffers (parser) {
+    closeText(parser)
+    if (parser.cdata !== '') {
+      emitNode(parser, 'oncdata', parser.cdata)
+      parser.cdata = ''
+    }
+    if (parser.script !== '') {
+      emitNode(parser, 'onscript', parser.script)
+      parser.script = ''
+    }
+  }
+
+  SAXParser.prototype = {
+    end: function () { end(this) },
+    write: write,
+    resume: function () { this.error = null; return this },
+    close: function () { return this.write(null) },
+    flush: function () { flushBuffers(this) }
+  }
+
+  var Stream
+  try {
+    Stream = require('stream').Stream
+  } catch (ex) {
+    Stream = function () {}
+  }
+
+  var streamWraps = sax.EVENTS.filter(function (ev) {
+    return ev !== 'error' && ev !== 'end'
+  })
+
+  function createStream (strict, opt) {
+    return new SAXStream(strict, opt)
+  }
+
+  function SAXStream (strict, opt) {
+    if (!(this instanceof SAXStream)) {
+      return new SAXStream(strict, opt)
+    }
+
+    Stream.apply(this)
+
+    this._parser = new SAXParser(strict, opt)
+    this.writable = true
+    this.readable = true
+
+    var me = this
+
+    this._parser.onend = function () {
+      me.emit('end')
+    }
+
+    this._parser.onerror = function (er) {
+      me.emit('error', er)
+
+      // if didn't throw, then means error was handled.
+      // go ahead and clear error, so we can write again.
+      me._parser.error = null
+    }
+
+    this._decoder = null
+
+    streamWraps.forEach(function (ev) {
+      Object.defineProperty(me, 'on' + ev, {
+        get: function () {
+          return me._parser['on' + ev]
+        },
+        set: function (h) {
+          if (!h) {
+            me.removeAllListeners(ev)
+            me._parser['on' + ev] = h
+            return h
+          }
+          me.on(ev, h)
+        },
+        enumerable: true,
+        configurable: false
+      })
+    })
+  }
+
+  SAXStream.prototype = Object.create(Stream.prototype, {
+    constructor: {
+      value: SAXStream
+    }
+  })
+
+  SAXStream.prototype.write = function (data) {
+    if (typeof Buffer === 'function' &&
+      typeof Buffer.isBuffer === 'function' &&
+      Buffer.isBuffer(data)) {
+      if (!this._decoder) {
+        var SD = require('string_decoder').StringDecoder
+        this._decoder = new SD('utf8')
+      }
+      data = this._decoder.write(data)
+    }
+
+    this._parser.write(data.toString())
+    this.emit('data', data)
+    return true
+  }
+
+  SAXStream.prototype.end = function (chunk) {
+    if (chunk && chunk.length) {
+      this.write(chunk)
+    }
+    this._parser.end()
+    return true
+  }
+
+  SAXStream.prototype.on = function (ev, handler) {
+    var me = this
+    if (!me._parser['on' + ev] && streamWraps.indexOf(ev) !== -1) {
+      me._parser['on' + ev] = function () {
+        var args = arguments.length === 1 ? [arguments[0]] : Array.apply(null, arguments)
+        args.splice(0, 0, ev)
+        me.emit.apply(me, args)
+      }
+    }
+
+    return Stream.prototype.on.call(me, ev, handler)
+  }
+
+  // this really needs to be replaced with character classes.
+  // XML allows all manner of ridiculous numbers and digits.
+  var CDATA = '[CDATA['
+  var DOCTYPE = 'DOCTYPE'
+  var XML_NAMESPACE = 'http://www.w3.org/XML/1998/namespace'
+  var XMLNS_NAMESPACE = 'http://www.w3.org/2000/xmlns/'
+  var rootNS = { xml: XML_NAMESPACE, xmlns: XMLNS_NAMESPACE }
+
+  // http://www.w3.org/TR/REC-xml/#NT-NameStartChar
+  // This implementation works on strings, a single character at a time
+  // as such, it cannot ever support astral-plane characters (10000-EFFFF)
+  // without a significant breaking change to either this  parser, or the
+  // JavaScript language.  Implementation of an emoji-capable xml parser
+  // is left as an exercise for the reader.
+  var nameStart = /[:_A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/
+
+  var nameBody = /[:_A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD\u00B7\u0300-\u036F\u203F-\u2040.\d-]/
+
+  var entityStart = /[#:_A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD]/
+  var entityBody = /[#:_A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD\u00B7\u0300-\u036F\u203F-\u2040.\d-]/
+
+  function isWhitespace (c) {
+    return c === ' ' || c === '\n' || c === '\r' || c === '\t'
+  }
+
+  function isQuote (c) {
+    return c === '"' || c === '\''
+  }
+
+  function isAttribEnd (c) {
+    return c === '>' || isWhitespace(c)
+  }
+
+  function isMatch (regex, c) {
+    return regex.test(c)
+  }
+
+  function notMatch (regex, c) {
+    return !isMatch(regex, c)
+  }
+
+  var S = 0
+  sax.STATE = {
+    BEGIN: S++, // leading byte order mark or whitespace
+    BEGIN_WHITESPACE: S++, // leading whitespace
+    TEXT: S++, // general stuff
+    TEXT_ENTITY: S++, // &amp and such.
+    OPEN_WAKA: S++, // <
+    SGML_DECL: S++, // <!BLARG
+    SGML_DECL_QUOTED: S++, // <!BLARG foo "bar
+    DOCTYPE: S++, // <!DOCTYPE
+    DOCTYPE_QUOTED: S++, // <!DOCTYPE "//blah
+    DOCTYPE_DTD: S++, // <!DOCTYPE "//blah" [ ...
+    DOCTYPE_DTD_QUOTED: S++, // <!DOCTYPE "//blah" [ "foo
+    COMMENT_STARTING: S++, // <!-
+    COMMENT: S++, // <!--
+    COMMENT_ENDING: S++, // <!-- blah -
+    COMMENT_ENDED: S++, // <!-- blah --
+    CDATA: S++, // <![CDATA[ something
+    CDATA_ENDING: S++, // ]
+    CDATA_ENDING_2: S++, // ]]
+    PROC_INST: S++, // <?hi
+    PROC_INST_BODY: S++, // <?hi there
+    PROC_INST_ENDING: S++, // <?hi "there" ?
+    OPEN_TAG: S++, // <strong
+    OPEN_TAG_SLASH: S++, // <strong /
+    ATTRIB: S++, // <a
+    ATTRIB_NAME: S++, // <a foo
+    ATTRIB_NAME_SAW_WHITE: S++, // <a foo _
+    ATTRIB_VALUE: S++, // <a foo=
+    ATTRIB_VALUE_QUOTED: S++, // <a foo="bar
+    ATTRIB_VALUE_CLOSED: S++, // <a foo="bar"
+    ATTRIB_VALUE_UNQUOTED: S++, // <a foo=bar
+    ATTRIB_VALUE_ENTITY_Q: S++, // <foo bar="&quot;"
+    ATTRIB_VALUE_ENTITY_U: S++, // <foo bar=&quot
+    CLOSE_TAG: S++, // </a
+    CLOSE_TAG_SAW_WHITE: S++, // </a   >
+    SCRIPT: S++, // <script> ...
+    SCRIPT_ENDING: S++ // <script> ... <
+  }
+
+  sax.XML_ENTITIES = {
+    'amp': '&',
+    'gt': '>',
+    'lt': '<',
+    'quot': '"',
+    'apos': "'"
+  }
+
+  sax.ENTITIES = {
+    'amp': '&',
+    'gt': '>',
+    'lt': '<',
+    'quot': '"',
+    'apos': "'",
+    'AElig': 198,
+    'Aacute': 193,
+    'Acirc': 194,
+    'Agrave': 192,
+    'Aring': 197,
+    'Atilde': 195,
+    'Auml': 196,
+    'Ccedil': 199,
+    'ETH': 208,
+    'Eacute': 201,
+    'Ecirc': 202,
+    'Egrave': 200,
+    'Euml': 203,
+    'Iacute': 205,
+    'Icirc': 206,
+    'Igrave': 204,
+    'Iuml': 207,
+    'Ntilde': 209,
+    'Oacute': 211,
+    'Ocirc': 212,
+    'Ograve': 210,
+    'Oslash': 216,
+    'Otilde': 213,
+    'Ouml': 214,
+    'THORN': 222,
+    'Uacute': 218,
+    'Ucirc': 219,
+    'Ugrave': 217,
+    'Uuml': 220,
+    'Yacute': 221,
+    'aacute': 225,
+    'acirc': 226,
+    'aelig': 230,
+    'agrave': 224,
+    'aring': 229,
+    'atilde': 227,
+    'auml': 228,
+    'ccedil': 231,
+    'eacute': 233,
+    'ecirc': 234,
+    'egrave': 232,
+    'eth': 240,
+    'euml': 235,
+    'iacute': 237,
+    'icirc': 238,
+    'igrave': 236,
+    'iuml': 239,
+    'ntilde': 241,
+    'oacute': 243,
+    'ocirc': 244,
+    'ograve': 242,
+    'oslash': 248,
+    'otilde': 245,
+    'ouml': 246,
+    'szlig': 223,
+    'thorn': 254,
+    'uacute': 250,
+    'ucirc': 251,
+    'ugrave': 249,
+    'uuml': 252,
+    'yacute': 253,
+    'yuml': 255,
+    'copy': 169,
+    'reg': 174,
+    'nbsp': 160,
+    'iexcl': 161,
+    'cent': 162,
+    'pound': 163,
+    'curren': 164,
+    'yen': 165,
+    'brvbar': 166,
+    'sect': 167,
+    'uml': 168,
+    'ordf': 170,
+    'laquo': 171,
+    'not': 172,
+    'shy': 173,
+    'macr': 175,
+    'deg': 176,
+    'plusmn': 177,
+    'sup1': 185,
+    'sup2': 178,
+    'sup3': 179,
+    'acute': 180,
+    'micro': 181,
+    'para': 182,
+    'middot': 183,
+    'cedil': 184,
+    'ordm': 186,
+    'raquo': 187,
+    'frac14': 188,
+    'frac12': 189,
+    'frac34': 190,
+    'iquest': 191,
+    'times': 215,
+    'divide': 247,
+    'OElig': 338,
+    'oelig': 339,
+    'Scaron': 352,
+    'scaron': 353,
+    'Yuml': 376,
+    'fnof': 402,
+    'circ': 710,
+    'tilde': 732,
+    'Alpha': 913,
+    'Beta': 914,
+    'Gamma': 915,
+    'Delta': 916,
+    'Epsilon': 917,
+    'Zeta': 918,
+    'Eta': 919,
+    'Theta': 920,
+    'Iota': 921,
+    'Kappa': 922,
+    'Lambda': 923,
+    'Mu': 924,
+    'Nu': 925,
+    'Xi': 926,
+    'Omicron': 927,
+    'Pi': 928,
+    'Rho': 929,
+    'Sigma': 931,
+    'Tau': 932,
+    'Upsilon': 933,
+    'Phi': 934,
+    'Chi': 935,
+    'Psi': 936,
+    'Omega': 937,
+    'alpha': 945,
+    'beta': 946,
+    'gamma': 947,
+    'delta': 948,
+    'epsilon': 949,
+    'zeta': 950,
+    'eta': 951,
+    'theta': 952,
+    'iota': 953,
+    'kappa': 954,
+    'lambda': 955,
+    'mu': 956,
+    'nu': 957,
+    'xi': 958,
+    'omicron': 959,
+    'pi': 960,
+    'rho': 961,
+    'sigmaf': 962,
+    'sigma': 963,
+    'tau': 964,
+    'upsilon': 965,
+    'phi': 966,
+    'chi': 967,
+    'psi': 968,
+    'omega': 969,
+    'thetasym': 977,
+    'upsih': 978,
+    'piv': 982,
+    'ensp': 8194,
+    'emsp': 8195,
+    'thinsp': 8201,
+    'zwnj': 8204,
+    'zwj': 8205,
+    'lrm': 8206,
+    'rlm': 8207,
+    'ndash': 8211,
+    'mdash': 8212,
+    'lsquo': 8216,
+    'rsquo': 8217,
+    'sbquo': 8218,
+    'ldquo': 8220,
+    'rdquo': 8221,
+    'bdquo': 8222,
+    'dagger': 8224,
+    'Dagger': 8225,
+    'bull': 8226,
+    'hellip': 8230,
+    'permil': 8240,
+    'prime': 8242,
+    'Prime': 8243,
+    'lsaquo': 8249,
+    'rsaquo': 8250,
+    'oline': 8254,
+    'frasl': 8260,
+    'euro': 8364,
+    'image': 8465,
+    'weierp': 8472,
+    'real': 8476,
+    'trade': 8482,
+    'alefsym': 8501,
+    'larr': 8592,
+    'uarr': 8593,
+    'rarr': 8594,
+    'darr': 8595,
+    'harr': 8596,
+    'crarr': 8629,
+    'lArr': 8656,
+    'uArr': 8657,
+    'rArr': 8658,
+    'dArr': 8659,
+    'hArr': 8660,
+    'forall': 8704,
+    'part': 8706,
+    'exist': 8707,
+    'empty': 8709,
+    'nabla': 8711,
+    'isin': 8712,
+    'notin': 8713,
+    'ni': 8715,
+    'prod': 8719,
+    'sum': 8721,
+    'minus': 8722,
+    'lowast': 8727,
+    'radic': 8730,
+    'prop': 8733,
+    'infin': 8734,
+    'ang': 8736,
+    'and': 8743,
+    'or': 8744,
+    'cap': 8745,
+    'cup': 8746,
+    'int': 8747,
+    'there4': 8756,
+    'sim': 8764,
+    'cong': 8773,
+    'asymp': 8776,
+    'ne': 8800,
+    'equiv': 8801,
+    'le': 8804,
+    'ge': 8805,
+    'sub': 8834,
+    'sup': 8835,
+    'nsub': 8836,
+    'sube': 8838,
+    'supe': 8839,
+    'oplus': 8853,
+    'otimes': 8855,
+    'perp': 8869,
+    'sdot': 8901,
+    'lceil': 8968,
+    'rceil': 8969,
+    'lfloor': 8970,
+    'rfloor': 8971,
+    'lang': 9001,
+    'rang': 9002,
+    'loz': 9674,
+    'spades': 9824,
+    'clubs': 9827,
+    'hearts': 9829,
+    'diams': 9830
+  }
+
+  Object.keys(sax.ENTITIES).forEach(function (key) {
+    var e = sax.ENTITIES[key]
+    var s = typeof e === 'number' ? String.fromCharCode(e) : e
+    sax.ENTITIES[key] = s
+  })
+
+  for (var s in sax.STATE) {
+    sax.STATE[sax.STATE[s]] = s
+  }
+
+  // shorthand
+  S = sax.STATE
+
+  function emit (parser, event, data) {
+    parser[event] && parser[event](data)
+  }
+
+  function emitNode (parser, nodeType, data) {
+    if (parser.textNode) closeText(parser)
+    emit(parser, nodeType, data)
+  }
+
+  function closeText (parser) {
+    parser.textNode = textopts(parser.opt, parser.textNode)
+    if (parser.textNode) emit(parser, 'ontext', parser.textNode)
+    parser.textNode = ''
+  }
+
+  function textopts (opt, text) {
+    if (opt.trim) text = text.trim()
+    if (opt.normalize) text = text.replace(/\s+/g, ' ')
+    return text
+  }
+
+  function error (parser, er) {
+    closeText(parser)
+    if (parser.trackPosition) {
+      er += '\nLine: ' + parser.line +
+        '\nColumn: ' + parser.column +
+        '\nChar: ' + parser.c
+    }
+    er = new Error(er)
+    parser.error = er
+    emit(parser, 'onerror', er)
+    return parser
+  }
+
+  function end (parser) {
+    if (parser.sawRoot && !parser.closedRoot) strictFail(parser, 'Unclosed root tag')
+    if ((parser.state !== S.BEGIN) &&
+      (parser.state !== S.BEGIN_WHITESPACE) &&
+      (parser.state !== S.TEXT)) {
+      error(parser, 'Unexpected end')
+    }
+    closeText(parser)
+    parser.c = ''
+    parser.closed = true
+    emit(parser, 'onend')
+    SAXParser.call(parser, parser.strict, parser.opt)
+    return parser
+  }
+
+  function strictFail (parser, message) {
+    if (typeof parser !== 'object' || !(parser instanceof SAXParser)) {
+      throw new Error('bad call to strictFail')
+    }
+    if (parser.strict) {
+      error(parser, message)
+    }
+  }
+
+  function newTag (parser) {
+    if (!parser.strict) parser.tagName = parser.tagName[parser.looseCase]()
+    var parent = parser.tags[parser.tags.length - 1] || parser
+    var tag = parser.tag = { name: parser.tagName, attributes: {} }
+
+    // will be overridden if tag contails an xmlns="foo" or xmlns:foo="bar"
+    if (parser.opt.xmlns) {
+      tag.ns = parent.ns
+    }
+    parser.attribList.length = 0
+    emitNode(parser, 'onopentagstart', tag)
+  }
+
+  function qname (name, attribute) {
+    var i = name.indexOf(':')
+    var qualName = i < 0 ? [ '', name ] : name.split(':')
+    var prefix = qualName[0]
+    var local = qualName[1]
+
+    // <x "xmlns"="http://foo">
+    if (attribute && name === 'xmlns') {
+      prefix = 'xmlns'
+      local = ''
+    }
+
+    return { prefix: prefix, local: local }
+  }
+
+  function attrib (parser) {
+    if (!parser.strict) {
+      parser.attribName = parser.attribName[parser.looseCase]()
+    }
+
+    if (parser.attribList.indexOf(parser.attribName) !== -1 ||
+      parser.tag.attributes.hasOwnProperty(parser.attribName)) {
+      parser.attribName = parser.attribValue = ''
+      return
+    }
+
+    if (parser.opt.xmlns) {
+      var qn = qname(parser.attribName, true)
+      var prefix = qn.prefix
+      var local = qn.local
+
+      if (prefix === 'xmlns') {
+        // namespace binding attribute. push the binding into scope
+        if (local === 'xml' && parser.attribValue !== XML_NAMESPACE) {
+          strictFail(parser,
+            'xml: prefix must be bound to ' + XML_NAMESPACE + '\n' +
+            'Actual: ' + parser.attribValue)
+        } else if (local === 'xmlns' && parser.attribValue !== XMLNS_NAMESPACE) {
+          strictFail(parser,
+            'xmlns: prefix must be bound to ' + XMLNS_NAMESPACE + '\n' +
+            'Actual: ' + parser.attribValue)
+        } else {
+          var tag = parser.tag
+          var parent = parser.tags[parser.tags.length - 1] || parser
+          if (tag.ns === parent.ns) {
+            tag.ns = Object.create(parent.ns)
+          }
+          tag.ns[local] = parser.attribValue
+        }
+      }
+
+      // defer onattribute events until all attributes have been seen
+      // so any new bindings can take effect. preserve attribute order
+      // so deferred events can be emitted in document order
+      parser.attribList.push([parser.attribName, parser.attribValue])
+    } else {
+      // in non-xmlns mode, we can emit the event right away
+      parser.tag.attributes[parser.attribName] = parser.attribValue
+      emitNode(parser, 'onattribute', {
+        name: parser.attribName,
+        value: parser.attribValue
+      })
+    }
+
+    parser.attribName = parser.attribValue = ''
+  }
+
+  function openTag (parser, selfClosing) {
+    if (parser.opt.xmlns) {
+      // emit namespace binding events
+      var tag = parser.tag
+
+      // add namespace info to tag
+      var qn = qname(parser.tagName)
+      tag.prefix = qn.prefix
+      tag.local = qn.local
+      tag.uri = tag.ns[qn.prefix] || ''
+
+      if (tag.prefix && !tag.uri) {
+        strictFail(parser, 'Unbound namespace prefix: ' +
+          JSON.stringify(parser.tagName))
+        tag.uri = qn.prefix
+      }
+
+      var parent = parser.tags[parser.tags.length - 1] || parser
+      if (tag.ns && parent.ns !== tag.ns) {
+        Object.keys(tag.ns).forEach(function (p) {
+          emitNode(parser, 'onopennamespace', {
+            prefix: p,
+            uri: tag.ns[p]
+          })
+        })
+      }
+
+      // handle deferred onattribute events
+      // Note: do not apply default ns to attributes:
+      //   http://www.w3.org/TR/REC-xml-names/#defaulting
+      for (var i = 0, l = parser.attribList.length; i < l; i++) {
+        var nv = parser.attribList[i]
+        var name = nv[0]
+        var value = nv[1]
+        var qualName = qname(name, true)
+        var prefix = qualName.prefix
+        var local = qualName.local
+        var uri = prefix === '' ? '' : (tag.ns[prefix] || '')
+        var a = {
+          name: name,
+          value: value,
+          prefix: prefix,
+          local: local,
+          uri: uri
+        }
+
+        // if there's any attributes with an undefined namespace,
+        // then fail on them now.
+        if (prefix && prefix !== 'xmlns' && !uri) {
+          strictFail(parser, 'Unbound namespace prefix: ' +
+            JSON.stringify(prefix))
+          a.uri = prefix
+        }
+        parser.tag.attributes[name] = a
+        emitNode(parser, 'onattribute', a)
+      }
+      parser.attribList.length = 0
+    }
+
+    parser.tag.isSelfClosing = !!selfClosing
+
+    // process the tag
+    parser.sawRoot = true
+    parser.tags.push(parser.tag)
+    emitNode(parser, 'onopentag', parser.tag)
+    if (!selfClosing) {
+      // special case for <script> in non-strict mode.
+      if (!parser.noscript && parser.tagName.toLowerCase() === 'script') {
+        parser.state = S.SCRIPT
+      } else {
+        parser.state = S.TEXT
+      }
+      parser.tag = null
+      parser.tagName = ''
+    }
+    parser.attribName = parser.attribValue = ''
+    parser.attribList.length = 0
+  }
+
+  function closeTag (parser) {
+    if (!parser.tagName) {
+      strictFail(parser, 'Weird empty close tag.')
+      parser.textNode += '</>'
+      parser.state = S.TEXT
+      return
+    }
+
+    if (parser.script) {
+      if (parser.tagName !== 'script') {
+        parser.script += '</' + parser.tagName + '>'
+        parser.tagName = ''
+        parser.state = S.SCRIPT
+        return
+      }
+      emitNode(parser, 'onscript', parser.script)
+      parser.script = ''
+    }
+
+    // first make sure that the closing tag actually exists.
+    // <a><b></c></b></a> will close everything, otherwise.
+    var t = parser.tags.length
+    var tagName = parser.tagName
+    if (!parser.strict) {
+      tagName = tagName[parser.looseCase]()
+    }
+    var closeTo = tagName
+    while (t--) {
+      var close = parser.tags[t]
+      if (close.name !== closeTo) {
+        // fail the first time in strict mode
+        strictFail(parser, 'Unexpected close tag')
+      } else {
+        break
+      }
+    }
+
+    // didn't find it.  we already failed for strict, so just abort.
+    if (t < 0) {
+      strictFail(parser, 'Unmatched closing tag: ' + parser.tagName)
+      parser.textNode += '</' + parser.tagName + '>'
+      parser.state = S.TEXT
+      return
+    }
+    parser.tagName = tagName
+    var s = parser.tags.length
+    while (s-- > t) {
+      var tag = parser.tag = parser.tags.pop()
+      parser.tagName = parser.tag.name
+      emitNode(parser, 'onclosetag', parser.tagName)
+
+      var x = {}
+      for (var i in tag.ns) {
+        x[i] = tag.ns[i]
+      }
+
+      var parent = parser.tags[parser.tags.length - 1] || parser
+      if (parser.opt.xmlns && tag.ns !== parent.ns) {
+        // remove namespace bindings introduced by tag
+        Object.keys(tag.ns).forEach(function (p) {
+          var n = tag.ns[p]
+          emitNode(parser, 'onclosenamespace', { prefix: p, uri: n })
+        })
+      }
+    }
+    if (t === 0) parser.closedRoot = true
+    parser.tagName = parser.attribValue = parser.attribName = ''
+    parser.attribList.length = 0
+    parser.state = S.TEXT
+  }
+
+  function parseEntity (parser) {
+    var entity = parser.entity
+    var entityLC = entity.toLowerCase()
+    var num
+    var numStr = ''
+
+    if (parser.ENTITIES[entity]) {
+      return parser.ENTITIES[entity]
+    }
+    if (parser.ENTITIES[entityLC]) {
+      return parser.ENTITIES[entityLC]
+    }
+    entity = entityLC
+    if (entity.charAt(0) === '#') {
+      if (entity.charAt(1) === 'x') {
+        entity = entity.slice(2)
+        num = parseInt(entity, 16)
+        numStr = num.toString(16)
+      } else {
+        entity = entity.slice(1)
+        num = parseInt(entity, 10)
+        numStr = num.toString(10)
+      }
+    }
+    entity = entity.replace(/^0+/, '')
+    if (isNaN(num) || numStr.toLowerCase() !== entity) {
+      strictFail(parser, 'Invalid character entity')
+      return '&' + parser.entity + ';'
+    }
+
+    return String.fromCodePoint(num)
+  }
+
+  function beginWhiteSpace (parser, c) {
+    if (c === '<') {
+      parser.state = S.OPEN_WAKA
+      parser.startTagPosition = parser.position
+    } else if (!isWhitespace(c)) {
+      // have to process this as a text node.
+      // weird, but happens.
+      strictFail(parser, 'Non-whitespace before first tag.')
+      parser.textNode = c
+      parser.state = S.TEXT
+    }
+  }
+
+  function charAt (chunk, i) {
+    var result = ''
+    if (i < chunk.length) {
+      result = chunk.charAt(i)
+    }
+    return result
+  }
+
+  function write (chunk) {
+    var parser = this
+    if (this.error) {
+      throw this.error
+    }
+    if (parser.closed) {
+      return error(parser,
+        'Cannot write after close. Assign an onready handler.')
+    }
+    if (chunk === null) {
+      return end(parser)
+    }
+    if (typeof chunk === 'object') {
+      chunk = chunk.toString()
+    }
+    var i = 0
+    var c = ''
+    while (true) {
+      c = charAt(chunk, i++)
+      parser.c = c
+
+      if (!c) {
+        break
+      }
+
+      if (parser.trackPosition) {
+        parser.position++
+        if (c === '\n') {
+          parser.line++
+          parser.column = 0
+        } else {
+          parser.column++
+        }
+      }
+
+      switch (parser.state) {
+        case S.BEGIN:
+          parser.state = S.BEGIN_WHITESPACE
+          if (c === '\uFEFF') {
+            continue
+          }
+          beginWhiteSpace(parser, c)
+          continue
+
+        case S.BEGIN_WHITESPACE:
+          beginWhiteSpace(parser, c)
+          continue
+
+        case S.TEXT:
+          if (parser.sawRoot && !parser.closedRoot) {
+            var starti = i - 1
+            while (c && c !== '<' && c !== '&') {
+              c = charAt(chunk, i++)
+              if (c && parser.trackPosition) {
+                parser.position++
+                if (c === '\n') {
+                  parser.line++
+                  parser.column = 0
+                } else {
+                  parser.column++
+                }
+              }
+            }
+            parser.textNode += chunk.substring(starti, i - 1)
+          }
+          if (c === '<' && !(parser.sawRoot && parser.closedRoot && !parser.strict)) {
+            parser.state = S.OPEN_WAKA
+            parser.startTagPosition = parser.position
+          } else {
+            if (!isWhitespace(c) && (!parser.sawRoot || parser.closedRoot)) {
+              strictFail(parser, 'Text data outside of root node.')
+            }
+            if (c === '&') {
+              parser.state = S.TEXT_ENTITY
+            } else {
+              parser.textNode += c
+            }
+          }
+          continue
+
+        case S.SCRIPT:
+          // only non-strict
+          if (c === '<') {
+            parser.state = S.SCRIPT_ENDING
+          } else {
+            parser.script += c
+          }
+          continue
+
+        case S.SCRIPT_ENDING:
+          if (c === '/') {
+            parser.state = S.CLOSE_TAG
+          } else {
+            parser.script += '<' + c
+            parser.state = S.SCRIPT
+          }
+          continue
+
+        case S.OPEN_WAKA:
+          // either a /, ?, !, or text is coming next.
+          if (c === '!') {
+            parser.state = S.SGML_DECL
+            parser.sgmlDecl = ''
+          } else if (isWhitespace(c)) {
+            // wait for it...
+          } else if (isMatch(nameStart, c)) {
+            parser.state = S.OPEN_TAG
+            parser.tagName = c
+          } else if (c === '/') {
+            parser.state = S.CLOSE_TAG
+            parser.tagName = ''
+          } else if (c === '?') {
+            parser.state = S.PROC_INST
+            parser.procInstName = parser.procInstBody = ''
+          } else {
+            strictFail(parser, 'Unencoded <')
+            // if there was some whitespace, then add that in.
+            if (parser.startTagPosition + 1 < parser.position) {
+              var pad = parser.position - parser.startTagPosition
+              c = new Array(pad).join(' ') + c
+            }
+            parser.textNode += '<' + c
+            parser.state = S.TEXT
+          }
+          continue
+
+        case S.SGML_DECL:
+          if ((parser.sgmlDecl + c).toUpperCase() === CDATA) {
+            emitNode(parser, 'onopencdata')
+            parser.state = S.CDATA
+            parser.sgmlDecl = ''
+            parser.cdata = ''
+          } else if (parser.sgmlDecl + c === '--') {
+            parser.state = S.COMMENT
+            parser.comment = ''
+            parser.sgmlDecl = ''
+          } else if ((parser.sgmlDecl + c).toUpperCase() === DOCTYPE) {
+            parser.state = S.DOCTYPE
+            if (parser.doctype || parser.sawRoot) {
+              strictFail(parser,
+                'Inappropriately located doctype declaration')
+            }
+            parser.doctype = ''
+            parser.sgmlDecl = ''
+          } else if (c === '>') {
+            emitNode(parser, 'onsgmldeclaration', parser.sgmlDecl)
+            parser.sgmlDecl = ''
+            parser.state = S.TEXT
+          } else if (isQuote(c)) {
+            parser.state = S.SGML_DECL_QUOTED
+            parser.sgmlDecl += c
+          } else {
+            parser.sgmlDecl += c
+          }
+          continue
+
+        case S.SGML_DECL_QUOTED:
+          if (c === parser.q) {
+            parser.state = S.SGML_DECL
+            parser.q = ''
+          }
+          parser.sgmlDecl += c
+          continue
+
+        case S.DOCTYPE:
+          if (c === '>') {
+            parser.state = S.TEXT
+            emitNode(parser, 'ondoctype', parser.doctype)
+            parser.doctype = true // just remember that we saw it.
+          } else {
+            parser.doctype += c
+            if (c === '[') {
+              parser.state = S.DOCTYPE_DTD
+            } else if (isQuote(c)) {
+              parser.state = S.DOCTYPE_QUOTED
+              parser.q = c
+            }
+          }
+          continue
+
+        case S.DOCTYPE_QUOTED:
+          parser.doctype += c
+          if (c === parser.q) {
+            parser.q = ''
+            parser.state = S.DOCTYPE
+          }
+          continue
+
+        case S.DOCTYPE_DTD:
+          parser.doctype += c
+          if (c === ']') {
+            parser.state = S.DOCTYPE
+          } else if (isQuote(c)) {
+            parser.state = S.DOCTYPE_DTD_QUOTED
+            parser.q = c
+          }
+          continue
+
+        case S.DOCTYPE_DTD_QUOTED:
+          parser.doctype += c
+          if (c === parser.q) {
+            parser.state = S.DOCTYPE_DTD
+            parser.q = ''
+          }
+          continue
+
+        case S.COMMENT:
+          if (c === '-') {
+            parser.state = S.COMMENT_ENDING
+          } else {
+            parser.comment += c
+          }
+          continue
+
+        case S.COMMENT_ENDING:
+          if (c === '-') {
+            parser.state = S.COMMENT_ENDED
+            parser.comment = textopts(parser.opt, parser.comment)
+            if (parser.comment) {
+              emitNode(parser, 'oncomment', parser.comment)
+            }
+            parser.comment = ''
+          } else {
+            parser.comment += '-' + c
+            parser.state = S.COMMENT
+          }
+          continue
+
+        case S.COMMENT_ENDED:
+          if (c !== '>') {
+            strictFail(parser, 'Malformed comment')
+            // allow <!-- blah -- bloo --> in non-strict mode,
+            // which is a comment of " blah -- bloo "
+            parser.comment += '--' + c
+            parser.state = S.COMMENT
+          } else {
+            parser.state = S.TEXT
+          }
+          continue
+
+        case S.CDATA:
+          if (c === ']') {
+            parser.state = S.CDATA_ENDING
+          } else {
+            parser.cdata += c
+          }
+          continue
+
+        case S.CDATA_ENDING:
+          if (c === ']') {
+            parser.state = S.CDATA_ENDING_2
+          } else {
+            parser.cdata += ']' + c
+            parser.state = S.CDATA
+          }
+          continue
+
+        case S.CDATA_ENDING_2:
+          if (c === '>') {
+            if (parser.cdata) {
+              emitNode(parser, 'oncdata', parser.cdata)
+            }
+            emitNode(parser, 'onclosecdata')
+            parser.cdata = ''
+            parser.state = S.TEXT
+          } else if (c === ']') {
+            parser.cdata += ']'
+          } else {
+            parser.cdata += ']]' + c
+            parser.state = S.CDATA
+          }
+          continue
+
+        case S.PROC_INST:
+          if (c === '?') {
+            parser.state = S.PROC_INST_ENDING
+          } else if (isWhitespace(c)) {
+            parser.state = S.PROC_INST_BODY
+          } else {
+            parser.procInstName += c
+          }
+          continue
+
+        case S.PROC_INST_BODY:
+          if (!parser.procInstBody && isWhitespace(c)) {
+            continue
+          } else if (c === '?') {
+            parser.state = S.PROC_INST_ENDING
+          } else {
+            parser.procInstBody += c
+          }
+          continue
+
+        case S.PROC_INST_ENDING:
+          if (c === '>') {
+            emitNode(parser, 'onprocessinginstruction', {
+              name: parser.procInstName,
+              body: parser.procInstBody
+            })
+            parser.procInstName = parser.procInstBody = ''
+            parser.state = S.TEXT
+          } else {
+            parser.procInstBody += '?' + c
+            parser.state = S.PROC_INST_BODY
+          }
+          continue
+
+        case S.OPEN_TAG:
+          if (isMatch(nameBody, c)) {
+            parser.tagName += c
+          } else {
+            newTag(parser)
+            if (c === '>') {
+              openTag(parser)
+            } else if (c === '/') {
+              parser.state = S.OPEN_TAG_SLASH
+            } else {
+              if (!isWhitespace(c)) {
+                strictFail(parser, 'Invalid character in tag name')
+              }
+              parser.state = S.ATTRIB
+            }
+          }
+          continue
+
+        case S.OPEN_TAG_SLASH:
+          if (c === '>') {
+            openTag(parser, true)
+            closeTag(parser)
+          } else {
+            strictFail(parser, 'Forward-slash in opening tag not followed by >')
+            parser.state = S.ATTRIB
+          }
+          continue
+
+        case S.ATTRIB:
+          // haven't read the attribute name yet.
+          if (isWhitespace(c)) {
+            continue
+          } else if (c === '>') {
+            openTag(parser)
+          } else if (c === '/') {
+            parser.state = S.OPEN_TAG_SLASH
+          } else if (isMatch(nameStart, c)) {
+            parser.attribName = c
+            parser.attribValue = ''
+            parser.state = S.ATTRIB_NAME
+          } else {
+            strictFail(parser, 'Invalid attribute name')
+          }
+          continue
+
+        case S.ATTRIB_NAME:
+          if (c === '=') {
+            parser.state = S.ATTRIB_VALUE
+          } else if (c === '>') {
+            strictFail(parser, 'Attribute without value')
+            parser.attribValue = parser.attribName
+            attrib(parser)
+            openTag(parser)
+          } else if (isWhitespace(c)) {
+            parser.state = S.ATTRIB_NAME_SAW_WHITE
+          } else if (isMatch(nameBody, c)) {
+            parser.attribName += c
+          } else {
+            strictFail(parser, 'Invalid attribute name')
+          }
+          continue
+
+        case S.ATTRIB_NAME_SAW_WHITE:
+          if (c === '=') {
+            parser.state = S.ATTRIB_VALUE
+          } else if (isWhitespace(c)) {
+            continue
+          } else {
+            strictFail(parser, 'Attribute without value')
+            parser.tag.attributes[parser.attribName] = ''
+            parser.attribValue = ''
+            emitNode(parser, 'onattribute', {
+              name: parser.attribName,
+              value: ''
+            })
+            parser.attribName = ''
+            if (c === '>') {
+              openTag(parser)
+            } else if (isMatch(nameStart, c)) {
+              parser.attribName = c
+              parser.state = S.ATTRIB_NAME
+            } else {
+              strictFail(parser, 'Invalid attribute name')
+              parser.state = S.ATTRIB
+            }
+          }
+          continue
+
+        case S.ATTRIB_VALUE:
+          if (isWhitespace(c)) {
+            continue
+          } else if (isQuote(c)) {
+            parser.q = c
+            parser.state = S.ATTRIB_VALUE_QUOTED
+          } else {
+            strictFail(parser, 'Unquoted attribute value')
+            parser.state = S.ATTRIB_VALUE_UNQUOTED
+            parser.attribValue = c
+          }
+          continue
+
+        case S.ATTRIB_VALUE_QUOTED:
+          if (c !== parser.q) {
+            if (c === '&') {
+              parser.state = S.ATTRIB_VALUE_ENTITY_Q
+            } else {
+              parser.attribValue += c
+            }
+            continue
+          }
+          attrib(parser)
+          parser.q = ''
+          parser.state = S.ATTRIB_VALUE_CLOSED
+          continue
+
+        case S.ATTRIB_VALUE_CLOSED:
+          if (isWhitespace(c)) {
+            parser.state = S.ATTRIB
+          } else if (c === '>') {
+            openTag(parser)
+          } else if (c === '/') {
+            parser.state = S.OPEN_TAG_SLASH
+          } else if (isMatch(nameStart, c)) {
+            strictFail(parser, 'No whitespace between attributes')
+            parser.attribName = c
+            parser.attribValue = ''
+            parser.state = S.ATTRIB_NAME
+          } else {
+            strictFail(parser, 'Invalid attribute name')
+          }
+          continue
+
+        case S.ATTRIB_VALUE_UNQUOTED:
+          if (!isAttribEnd(c)) {
+            if (c === '&') {
+              parser.state = S.ATTRIB_VALUE_ENTITY_U
+            } else {
+              parser.attribValue += c
+            }
+            continue
+          }
+          attrib(parser)
+          if (c === '>') {
+            openTag(parser)
+          } else {
+            parser.state = S.ATTRIB
+          }
+          continue
+
+        case S.CLOSE_TAG:
+          if (!parser.tagName) {
+            if (isWhitespace(c)) {
+              continue
+            } else if (notMatch(nameStart, c)) {
+              if (parser.script) {
+                parser.script += '</' + c
+                parser.state = S.SCRIPT
+              } else {
+                strictFail(parser, 'Invalid tagname in closing tag.')
+              }
+            } else {
+              parser.tagName = c
+            }
+          } else if (c === '>') {
+            closeTag(parser)
+          } else if (isMatch(nameBody, c)) {
+            parser.tagName += c
+          } else if (parser.script) {
+            parser.script += '</' + parser.tagName
+            parser.tagName = ''
+            parser.state = S.SCRIPT
+          } else {
+            if (!isWhitespace(c)) {
+              strictFail(parser, 'Invalid tagname in closing tag')
+            }
+            parser.state = S.CLOSE_TAG_SAW_WHITE
+          }
+          continue
+
+        case S.CLOSE_TAG_SAW_WHITE:
+          if (isWhitespace(c)) {
+            continue
+          }
+          if (c === '>') {
+            closeTag(parser)
+          } else {
+            strictFail(parser, 'Invalid characters in closing tag')
+          }
+          continue
+
+        case S.TEXT_ENTITY:
+        case S.ATTRIB_VALUE_ENTITY_Q:
+        case S.ATTRIB_VALUE_ENTITY_U:
+          var returnState
+          var buffer
+          switch (parser.state) {
+            case S.TEXT_ENTITY:
+              returnState = S.TEXT
+              buffer = 'textNode'
+              break
+
+            case S.ATTRIB_VALUE_ENTITY_Q:
+              returnState = S.ATTRIB_VALUE_QUOTED
+              buffer = 'attribValue'
+              break
+
+            case S.ATTRIB_VALUE_ENTITY_U:
+              returnState = S.ATTRIB_VALUE_UNQUOTED
+              buffer = 'attribValue'
+              break
+          }
+
+          if (c === ';') {
+            parser[buffer] += parseEntity(parser)
+            parser.entity = ''
+            parser.state = returnState
+          } else if (isMatch(parser.entity.length ? entityBody : entityStart, c)) {
+            parser.entity += c
+          } else {
+            strictFail(parser, 'Invalid character in entity name')
+            parser[buffer] += '&' + parser.entity + c
+            parser.entity = ''
+            parser.state = returnState
+          }
+
+          continue
+
+        default:
+          throw new Error(parser, 'Unknown state: ' + parser.state)
+      }
+    } // while
+
+    if (parser.position >= parser.bufferCheckPosition) {
+      checkBufferLength(parser)
+    }
+    return parser
+  }
+
+  /*! http://mths.be/fromcodepoint v0.1.0 by @mathias */
+  /* istanbul ignore next */
+  if (!String.fromCodePoint) {
+    (function () {
+      var stringFromCharCode = String.fromCharCode
+      var floor = Math.floor
+      var fromCodePoint = function () {
+        var MAX_SIZE = 0x4000
+        var codeUnits = []
+        var highSurrogate
+        var lowSurrogate
+        var index = -1
+        var length = arguments.length
+        if (!length) {
+          return ''
+        }
+        var result = ''
+        while (++index < length) {
+          var codePoint = Number(arguments[index])
+          if (
+            !isFinite(codePoint) || // `NaN`, `+Infinity`, or `-Infinity`
+            codePoint < 0 || // not a valid Unicode code point
+            codePoint > 0x10FFFF || // not a valid Unicode code point
+            floor(codePoint) !== codePoint // not an integer
+          ) {
+            throw RangeError('Invalid code point: ' + codePoint)
+          }
+          if (codePoint <= 0xFFFF) { // BMP code point
+            codeUnits.push(codePoint)
+          } else { // Astral code point; split in surrogate halves
+            // http://mathiasbynens.be/notes/javascript-encoding#surrogate-formulae
+            codePoint -= 0x10000
+            highSurrogate = (codePoint >> 10) + 0xD800
+            lowSurrogate = (codePoint % 0x400) + 0xDC00
+            codeUnits.push(highSurrogate, lowSurrogate)
+          }
+          if (index + 1 === length || codeUnits.length > MAX_SIZE) {
+            result += stringFromCharCode.apply(null, codeUnits)
+            codeUnits.length = 0
+          }
+        }
+        return result
+      }
+      /* istanbul ignore next */
+      if (Object.defineProperty) {
+        Object.defineProperty(String, 'fromCodePoint', {
+          value: fromCodePoint,
+          configurable: true,
+          writable: true
+        })
+      } else {
+        String.fromCodePoint = fromCodePoint
+      }
+    }())
+  }
+})(typeof exports === 'undefined' ? this.sax = {} : exports)
+
+}).call(this)}).call(this,require("buffer").Buffer)
+},{"buffer":6,"stream":54,"string_decoder":89}],111:[function(require,module,exports){
+const { setTimeout } = require('timers');
+
+// A cache that expires.
+module.exports = class Cache extends Map {
+  constructor(timeout = 1000) {
+    super();
+    this.timeout = timeout;
+  }
+  set(key, value) {
+    if (this.has(key)) {
+      clearTimeout(super.get(key).tid);
+    }
+    super.set(key, {
+      tid: setTimeout(this.delete.bind(this, key), this.timeout).unref(),
+      value,
+    });
+  }
+  get(key) {
+    let entry = super.get(key);
+    if (entry) {
+      return entry.value;
+    }
+    return null;
+  }
+  getOrSet(key, fn) {
+    if (this.has(key)) {
+      return this.get(key);
+    } else {
+      let value = fn();
+      this.set(key, value);
+      (async() => {
+        try {
+          await value;
+        } catch (err) {
+          this.delete(key);
+        }
+      })();
+      return value;
+    }
+  }
+  delete(key) {
+    let entry = super.get(key);
+    if (entry) {
+      clearTimeout(entry.tid);
+      super.delete(key);
+    }
+  }
+  clear() {
+    for (let entry of this.values()) {
+      clearTimeout(entry.tid);
+    }
+    super.clear();
+  }
+};
+
+},{"timers":91}],112:[function(require,module,exports){
+const utils = require('./utils');
+const FORMATS = require('./formats');
+
+
+// Use these to help sort formats, higher index is better.
+const audioEncodingRanks = [
+  'mp4a',
+  'mp3',
+  'vorbis',
+  'aac',
+  'opus',
+  'flac',
+];
+const videoEncodingRanks = [
+  'mp4v',
+  'avc1',
+  'Sorenson H.283',
+  'MPEG-4 Visual',
+  'VP8',
+  'VP9',
+  'H.264',
+];
+
+const getVideoBitrate = format => format.bitrate || 0;
+const getVideoEncodingRank = format =>
+  videoEncodingRanks.findIndex(enc => format.codecs && format.codecs.includes(enc));
+const getAudioBitrate = format => format.audioBitrate || 0;
+const getAudioEncodingRank = format =>
+  audioEncodingRanks.findIndex(enc => format.codecs && format.codecs.includes(enc));
+
+
+/**
+ * Sort formats by a list of functions.
+ *
+ * @param {Object} a
+ * @param {Object} b
+ * @param {Array.<Function>} sortBy
+ * @returns {number}
+ */
+const sortFormatsBy = (a, b, sortBy) => {
+  let res = 0;
+  for (let fn of sortBy) {
+    res = fn(b) - fn(a);
+    if (res !== 0) {
+      break;
+    }
+  }
+  return res;
+};
+
+
+const sortFormatsByVideo = (a, b) => sortFormatsBy(a, b, [
+  format => parseInt(format.qualityLabel),
+  getVideoBitrate,
+  getVideoEncodingRank,
+]);
+
+
+const sortFormatsByAudio = (a, b) => sortFormatsBy(a, b, [
+  getAudioBitrate,
+  getAudioEncodingRank,
+]);
+
+
+/**
+ * Sort formats from highest quality to lowest.
+ *
+ * @param {Object} a
+ * @param {Object} b
+ * @returns {number}
+ */
+exports.sortFormats = (a, b) => sortFormatsBy(a, b, [
+  // Formats with both video and audio are ranked highest.
+  format => +!!format.isHLS,
+  format => +!!format.isDashMPD,
+  format => +(format.contentLength > 0),
+  format => +(format.hasVideo && format.hasAudio),
+  format => +format.hasVideo,
+  format => parseInt(format.qualityLabel) || 0,
+  getVideoBitrate,
+  getAudioBitrate,
+  getVideoEncodingRank,
+  getAudioEncodingRank,
+]);
+
+
+/**
+ * Choose a format depending on the given options.
+ *
+ * @param {Array.<Object>} formats
+ * @param {Object} options
+ * @returns {Object}
+ * @throws {Error} when no format matches the filter/format rules
+ */
+exports.chooseFormat = (formats, options) => {
+  if (typeof options.format === 'object') {
+    if (!options.format.url) {
+      throw Error('Invalid format given, did you use `ytdl.getInfo()`?');
+    }
+    return options.format;
+  }
+
+  if (options.filter) {
+    formats = exports.filterFormats(formats, options.filter);
+  }
+
+  // We currently only support HLS-Formats for livestreams
+  // So we (now) remove all non-HLS streams
+  if (formats.some(fmt => fmt.isHLS)) {
+    formats = formats.filter(fmt => fmt.isHLS || !fmt.isLive);
+  }
+
+  let format;
+  const quality = options.quality || 'highest';
+  switch (quality) {
+    case 'highest':
+      format = formats[0];
+      break;
+
+    case 'lowest':
+      format = formats[formats.length - 1];
+      break;
+
+    case 'highestaudio': {
+      formats = exports.filterFormats(formats, 'audio');
+      formats.sort(sortFormatsByAudio);
+      // Filter for only the best audio format
+      const bestAudioFormat = formats[0];
+      formats = formats.filter(f => sortFormatsByAudio(bestAudioFormat, f) === 0);
+      // Check for the worst video quality for the best audio quality and pick according
+      // This does not loose default sorting of video encoding and bitrate
+      const worstVideoQuality = formats.map(f => parseInt(f.qualityLabel) || 0).sort((a, b) => a - b)[0];
+      format = formats.find(f => (parseInt(f.qualityLabel) || 0) === worstVideoQuality);
+      break;
+    }
+
+    case 'lowestaudio':
+      formats = exports.filterFormats(formats, 'audio');
+      formats.sort(sortFormatsByAudio);
+      format = formats[formats.length - 1];
+      break;
+
+    case 'highestvideo': {
+      formats = exports.filterFormats(formats, 'video');
+      formats.sort(sortFormatsByVideo);
+      // Filter for only the best video format
+      const bestVideoFormat = formats[0];
+      formats = formats.filter(f => sortFormatsByVideo(bestVideoFormat, f) === 0);
+      // Check for the worst audio quality for the best video quality and pick according
+      // This does not loose default sorting of audio encoding and bitrate
+      const worstAudioQuality = formats.map(f => f.audioBitrate || 0).sort((a, b) => a - b)[0];
+      format = formats.find(f => (f.audioBitrate || 0) === worstAudioQuality);
+      break;
+    }
+
+    case 'lowestvideo':
+      formats = exports.filterFormats(formats, 'video');
+      formats.sort(sortFormatsByVideo);
+      format = formats[formats.length - 1];
+      break;
+
+    default:
+      format = getFormatByQuality(quality, formats);
+      break;
+  }
+
+  if (!format) {
+    throw Error(`No such format found: ${quality}`);
+  }
+  return format;
+};
+
+/**
+ * Gets a format based on quality or array of quality's
+ *
+ * @param {string|[string]} quality
+ * @param {[Object]} formats
+ * @returns {Object}
+ */
+const getFormatByQuality = (quality, formats) => {
+  let getFormat = itag => formats.find(format => `${format.itag}` === `${itag}`);
+  if (Array.isArray(quality)) {
+    return getFormat(quality.find(q => getFormat(q)));
+  } else {
+    return getFormat(quality);
+  }
+};
+
+
+/**
+ * @param {Array.<Object>} formats
+ * @param {Function} filter
+ * @returns {Array.<Object>}
+ */
+exports.filterFormats = (formats, filter) => {
+  let fn;
+  switch (filter) {
+    case 'videoandaudio':
+    case 'audioandvideo':
+      fn = format => format.hasVideo && format.hasAudio;
+      break;
+
+    case 'video':
+      fn = format => format.hasVideo;
+      break;
+
+    case 'videoonly':
+      fn = format => format.hasVideo && !format.hasAudio;
+      break;
+
+    case 'audio':
+      fn = format => format.hasAudio;
+      break;
+
+    case 'audioonly':
+      fn = format => !format.hasVideo && format.hasAudio;
+      break;
+
+    default:
+      if (typeof filter === 'function') {
+        fn = filter;
+      } else {
+        throw TypeError(`Given filter (${filter}) is not supported`);
+      }
+  }
+  return formats.filter(format => !!format.url && fn(format));
+};
+
+
+/**
+ * @param {Object} format
+ * @returns {Object}
+ */
+exports.addFormatMeta = format => {
+  format = Object.assign({}, FORMATS[format.itag], format);
+  format.hasVideo = !!format.qualityLabel;
+  format.hasAudio = !!format.audioBitrate;
+  format.container = format.mimeType ?
+    format.mimeType.split(';')[0].split('/')[1] : null;
+  format.codecs = format.mimeType ?
+    utils.between(format.mimeType, 'codecs="', '"') : null;
+  format.videoCodec = format.hasVideo && format.codecs ?
+    format.codecs.split(', ')[0] : null;
+  format.audioCodec = format.hasAudio && format.codecs ?
+    format.codecs.split(', ').slice(-1)[0] : null;
+  format.isLive = /\bsource[/=]yt_live_broadcast\b/.test(format.url);
+  format.isHLS = /\/manifest\/hls_(variant|playlist)\//.test(format.url);
+  format.isDashMPD = /\/manifest\/dash\//.test(format.url);
+  return format;
+};
+
+},{"./formats":113,"./utils":119}],113:[function(require,module,exports){
+/**
+ * http://en.wikipedia.org/wiki/YouTube#Quality_and_formats
+ */
+module.exports = {
+
+  5: {
+    mimeType: 'video/flv; codecs="Sorenson H.283, mp3"',
+    qualityLabel: '240p',
+    bitrate: 250000,
+    audioBitrate: 64,
+  },
+
+  6: {
+    mimeType: 'video/flv; codecs="Sorenson H.263, mp3"',
+    qualityLabel: '270p',
+    bitrate: 800000,
+    audioBitrate: 64,
+  },
+
+  13: {
+    mimeType: 'video/3gp; codecs="MPEG-4 Visual, aac"',
+    qualityLabel: null,
+    bitrate: 500000,
+    audioBitrate: null,
+  },
+
+  17: {
+    mimeType: 'video/3gp; codecs="MPEG-4 Visual, aac"',
+    qualityLabel: '144p',
+    bitrate: 50000,
+    audioBitrate: 24,
+  },
+
+  18: {
+    mimeType: 'video/mp4; codecs="H.264, aac"',
+    qualityLabel: '360p',
+    bitrate: 500000,
+    audioBitrate: 96,
+  },
+
+  22: {
+    mimeType: 'video/mp4; codecs="H.264, aac"',
+    qualityLabel: '720p',
+    bitrate: 2000000,
+    audioBitrate: 192,
+  },
+
+  34: {
+    mimeType: 'video/flv; codecs="H.264, aac"',
+    qualityLabel: '360p',
+    bitrate: 500000,
+    audioBitrate: 128,
+  },
+
+  35: {
+    mimeType: 'video/flv; codecs="H.264, aac"',
+    qualityLabel: '480p',
+    bitrate: 800000,
+    audioBitrate: 128,
+  },
+
+  36: {
+    mimeType: 'video/3gp; codecs="MPEG-4 Visual, aac"',
+    qualityLabel: '240p',
+    bitrate: 175000,
+    audioBitrate: 32,
+  },
+
+  37: {
+    mimeType: 'video/mp4; codecs="H.264, aac"',
+    qualityLabel: '1080p',
+    bitrate: 3000000,
+    audioBitrate: 192,
+  },
+
+  38: {
+    mimeType: 'video/mp4; codecs="H.264, aac"',
+    qualityLabel: '3072p',
+    bitrate: 3500000,
+    audioBitrate: 192,
+  },
+
+  43: {
+    mimeType: 'video/webm; codecs="VP8, vorbis"',
+    qualityLabel: '360p',
+    bitrate: 500000,
+    audioBitrate: 128,
+  },
+
+  44: {
+    mimeType: 'video/webm; codecs="VP8, vorbis"',
+    qualityLabel: '480p',
+    bitrate: 1000000,
+    audioBitrate: 128,
+  },
+
+  45: {
+    mimeType: 'video/webm; codecs="VP8, vorbis"',
+    qualityLabel: '720p',
+    bitrate: 2000000,
+    audioBitrate: 192,
+  },
+
+  46: {
+    mimeType: 'audio/webm; codecs="vp8, vorbis"',
+    qualityLabel: '1080p',
+    bitrate: null,
+    audioBitrate: 192,
+  },
+
+  82: {
+    mimeType: 'video/mp4; codecs="H.264, aac"',
+    qualityLabel: '360p',
+    bitrate: 500000,
+    audioBitrate: 96,
+  },
+
+  83: {
+    mimeType: 'video/mp4; codecs="H.264, aac"',
+    qualityLabel: '240p',
+    bitrate: 500000,
+    audioBitrate: 96,
+  },
+
+  84: {
+    mimeType: 'video/mp4; codecs="H.264, aac"',
+    qualityLabel: '720p',
+    bitrate: 2000000,
+    audioBitrate: 192,
+  },
+
+  85: {
+    mimeType: 'video/mp4; codecs="H.264, aac"',
+    qualityLabel: '1080p',
+    bitrate: 3000000,
+    audioBitrate: 192,
+  },
+
+  91: {
+    mimeType: 'video/ts; codecs="H.264, aac"',
+    qualityLabel: '144p',
+    bitrate: 100000,
+    audioBitrate: 48,
+  },
+
+  92: {
+    mimeType: 'video/ts; codecs="H.264, aac"',
+    qualityLabel: '240p',
+    bitrate: 150000,
+    audioBitrate: 48,
+  },
+
+  93: {
+    mimeType: 'video/ts; codecs="H.264, aac"',
+    qualityLabel: '360p',
+    bitrate: 500000,
+    audioBitrate: 128,
+  },
+
+  94: {
+    mimeType: 'video/ts; codecs="H.264, aac"',
+    qualityLabel: '480p',
+    bitrate: 800000,
+    audioBitrate: 128,
+  },
+
+  95: {
+    mimeType: 'video/ts; codecs="H.264, aac"',
+    qualityLabel: '720p',
+    bitrate: 1500000,
+    audioBitrate: 256,
+  },
+
+  96: {
+    mimeType: 'video/ts; codecs="H.264, aac"',
+    qualityLabel: '1080p',
+    bitrate: 2500000,
+    audioBitrate: 256,
+  },
+
+  100: {
+    mimeType: 'audio/webm; codecs="VP8, vorbis"',
+    qualityLabel: '360p',
+    bitrate: null,
+    audioBitrate: 128,
+  },
+
+  101: {
+    mimeType: 'audio/webm; codecs="VP8, vorbis"',
+    qualityLabel: '360p',
+    bitrate: null,
+    audioBitrate: 192,
+  },
+
+  102: {
+    mimeType: 'audio/webm; codecs="VP8, vorbis"',
+    qualityLabel: '720p',
+    bitrate: null,
+    audioBitrate: 192,
+  },
+
+  120: {
+    mimeType: 'video/flv; codecs="H.264, aac"',
+    qualityLabel: '720p',
+    bitrate: 2000000,
+    audioBitrate: 128,
+  },
+
+  127: {
+    mimeType: 'audio/ts; codecs="aac"',
+    qualityLabel: null,
+    bitrate: null,
+    audioBitrate: 96,
+  },
+
+  128: {
+    mimeType: 'audio/ts; codecs="aac"',
+    qualityLabel: null,
+    bitrate: null,
+    audioBitrate: 96,
+  },
+
+  132: {
+    mimeType: 'video/ts; codecs="H.264, aac"',
+    qualityLabel: '240p',
+    bitrate: 150000,
+    audioBitrate: 48,
+  },
+
+  133: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '240p',
+    bitrate: 200000,
+    audioBitrate: null,
+  },
+
+  134: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '360p',
+    bitrate: 300000,
+    audioBitrate: null,
+  },
+
+  135: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '480p',
+    bitrate: 500000,
+    audioBitrate: null,
+  },
+
+  136: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '720p',
+    bitrate: 1000000,
+    audioBitrate: null,
+  },
+
+  137: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '1080p',
+    bitrate: 2500000,
+    audioBitrate: null,
+  },
+
+  138: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '4320p',
+    bitrate: 13500000,
+    audioBitrate: null,
+  },
+
+  139: {
+    mimeType: 'audio/mp4; codecs="aac"',
+    qualityLabel: null,
+    bitrate: null,
+    audioBitrate: 48,
+  },
+
+  140: {
+    mimeType: 'audio/m4a; codecs="aac"',
+    qualityLabel: null,
+    bitrate: null,
+    audioBitrate: 128,
+  },
+
+  141: {
+    mimeType: 'audio/mp4; codecs="aac"',
+    qualityLabel: null,
+    bitrate: null,
+    audioBitrate: 256,
+  },
+
+  151: {
+    mimeType: 'video/ts; codecs="H.264, aac"',
+    qualityLabel: '720p',
+    bitrate: 50000,
+    audioBitrate: 24,
+  },
+
+  160: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '144p',
+    bitrate: 100000,
+    audioBitrate: null,
+  },
+
+  171: {
+    mimeType: 'audio/webm; codecs="vorbis"',
+    qualityLabel: null,
+    bitrate: null,
+    audioBitrate: 128,
+  },
+
+  172: {
+    mimeType: 'audio/webm; codecs="vorbis"',
+    qualityLabel: null,
+    bitrate: null,
+    audioBitrate: 192,
+  },
+
+  242: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '240p',
+    bitrate: 100000,
+    audioBitrate: null,
+  },
+
+  243: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '360p',
+    bitrate: 250000,
+    audioBitrate: null,
+  },
+
+  244: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '480p',
+    bitrate: 500000,
+    audioBitrate: null,
+  },
+
+  247: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '720p',
+    bitrate: 700000,
+    audioBitrate: null,
+  },
+
+  248: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '1080p',
+    bitrate: 1500000,
+    audioBitrate: null,
+  },
+
+  249: {
+    mimeType: 'audio/webm; codecs="opus"',
+    qualityLabel: null,
+    bitrate: null,
+    audioBitrate: 48,
+  },
+
+  250: {
+    mimeType: 'audio/webm; codecs="opus"',
+    qualityLabel: null,
+    bitrate: null,
+    audioBitrate: 64,
+  },
+
+  251: {
+    mimeType: 'audio/webm; codecs="opus"',
+    qualityLabel: null,
+    bitrate: null,
+    audioBitrate: 160,
+  },
+
+  264: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '1440p',
+    bitrate: 4000000,
+    audioBitrate: null,
+  },
+
+  266: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '2160p',
+    bitrate: 12500000,
+    audioBitrate: null,
+  },
+
+  271: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '1440p',
+    bitrate: 9000000,
+    audioBitrate: null,
+  },
+
+  272: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '4320p',
+    bitrate: 20000000,
+    audioBitrate: null,
+  },
+
+  278: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '144p 30fps',
+    bitrate: 80000,
+    audioBitrate: null,
+  },
+
+  298: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '720p',
+    bitrate: 3000000,
+    audioBitrate: null,
+  },
+
+  299: {
+    mimeType: 'video/mp4; codecs="H.264"',
+    qualityLabel: '1080p',
+    bitrate: 5500000,
+    audioBitrate: null,
+  },
+
+  300: {
+    mimeType: 'video/ts; codecs="H.264, aac"',
+    qualityLabel: '720p',
+    bitrate: 1318000,
+    audioBitrate: 48,
+  },
+
+  302: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '720p HFR',
+    bitrate: 2500000,
+    audioBitrate: null,
+  },
+
+  303: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '1080p HFR',
+    bitrate: 5000000,
+    audioBitrate: null,
+  },
+
+  308: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '1440p HFR',
+    bitrate: 10000000,
+    audioBitrate: null,
+  },
+
+  313: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '2160p',
+    bitrate: 13000000,
+    audioBitrate: null,
+  },
+
+  315: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '2160p HFR',
+    bitrate: 20000000,
+    audioBitrate: null,
+  },
+
+  330: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '144p HDR, HFR',
+    bitrate: 80000,
+    audioBitrate: null,
+  },
+
+  331: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '240p HDR, HFR',
+    bitrate: 100000,
+    audioBitrate: null,
+  },
+
+  332: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '360p HDR, HFR',
+    bitrate: 250000,
+    audioBitrate: null,
+  },
+
+  333: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '240p HDR, HFR',
+    bitrate: 500000,
+    audioBitrate: null,
+  },
+
+  334: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '720p HDR, HFR',
+    bitrate: 1000000,
+    audioBitrate: null,
+  },
+
+  335: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '1080p HDR, HFR',
+    bitrate: 1500000,
+    audioBitrate: null,
+  },
+
+  336: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '1440p HDR, HFR',
+    bitrate: 5000000,
+    audioBitrate: null,
+  },
+
+  337: {
+    mimeType: 'video/webm; codecs="VP9"',
+    qualityLabel: '2160p HDR, HFR',
+    bitrate: 12000000,
+    audioBitrate: null,
+  },
+
+};
+
+},{}],114:[function(require,module,exports){
+(function (setImmediate){(function (){
+const PassThrough = require('stream').PassThrough;
+const getInfo = require('./info');
+const utils = require('./utils');
+const formatUtils = require('./format-utils');
+const urlUtils = require('./url-utils');
+const sig = require('./sig');
+const miniget = require('miniget');
+const m3u8stream = require('m3u8stream');
+const { parseTimestamp } = require('m3u8stream');
+
+
+/**
+ * @param {string} link
+ * @param {!Object} options
+ * @returns {ReadableStream}
+ */
+const ytdl = (link, options) => {
+  const stream = createStream(options);
+  ytdl.getInfo(link, options).then(info => {
+    downloadFromInfoCallback(stream, info, options);
+  }, stream.emit.bind(stream, 'error'));
+  return stream;
+};
+module.exports = ytdl;
+
+ytdl.getBasicInfo = getInfo.getBasicInfo;
+ytdl.getInfo = getInfo.getInfo;
+ytdl.chooseFormat = formatUtils.chooseFormat;
+ytdl.filterFormats = formatUtils.filterFormats;
+ytdl.validateID = urlUtils.validateID;
+ytdl.validateURL = urlUtils.validateURL;
+ytdl.getURLVideoID = urlUtils.getURLVideoID;
+ytdl.getVideoID = urlUtils.getVideoID;
+ytdl.cache = {
+  sig: sig.cache,
+  info: getInfo.cache,
+  watch: getInfo.watchPageCache,
+  cookie: getInfo.cookieCache,
+};
+ytdl.version = require('../package.json').version;
+
+
+const createStream = options => {
+  const stream = new PassThrough({
+    highWaterMark: (options && options.highWaterMark) || 1024 * 512,
+  });
+  stream._destroy = () => { stream.destroyed = true; };
+  return stream;
+};
+
+
+const pipeAndSetEvents = (req, stream, end) => {
+  // Forward events from the request to the stream.
+  [
+    'abort', 'request', 'response', 'error', 'redirect', 'retry', 'reconnect',
+  ].forEach(event => {
+    req.prependListener(event, stream.emit.bind(stream, event));
+  });
+  req.pipe(stream, { end });
+};
+
+
+/**
+ * Chooses a format to download.
+ *
+ * @param {stream.Readable} stream
+ * @param {Object} info
+ * @param {Object} options
+ */
+const downloadFromInfoCallback = (stream, info, options) => {
+  options = options || {};
+
+  let err = utils.playError(info.player_response, ['UNPLAYABLE', 'LIVE_STREAM_OFFLINE', 'LOGIN_REQUIRED']);
+  if (err) {
+    stream.emit('error', err);
+    return;
+  }
+
+  if (!info.formats.length) {
+    stream.emit('error', Error('This video is unavailable'));
+    return;
+  }
+
+  let format;
+  try {
+    format = formatUtils.chooseFormat(info.formats, options);
+  } catch (e) {
+    stream.emit('error', e);
+    return;
+  }
+  stream.emit('info', info, format);
+  if (stream.destroyed) { return; }
+
+  let contentLength, downloaded = 0;
+  const ondata = chunk => {
+    downloaded += chunk.length;
+    stream.emit('progress', chunk.length, downloaded, contentLength);
+  };
+
+  // Download the file in chunks, in this case the default is 10MB,
+  // anything over this will cause youtube to throttle the download
+  const dlChunkSize = options.dlChunkSize || 1024 * 1024 * 10;
+  let req;
+  let shouldEnd = true;
+
+  if (format.isHLS || format.isDashMPD) {
+    req = m3u8stream(format.url, {
+      chunkReadahead: +info.live_chunk_readahead,
+      begin: options.begin || (format.isLive && Date.now()),
+      liveBuffer: options.liveBuffer,
+      requestOptions: options.requestOptions,
+      parser: format.isDashMPD ? 'dash-mpd' : 'm3u8',
+      id: format.itag,
+    });
+
+    req.on('progress', (segment, totalSegments) => {
+      stream.emit('progress', segment.size, segment.num, totalSegments);
+    });
+    pipeAndSetEvents(req, stream, shouldEnd);
+  } else {
+    const requestOptions = Object.assign({}, options.requestOptions, {
+      maxReconnects: 6,
+      maxRetries: 3,
+      backoff: { inc: 500, max: 10000 },
+    });
+
+    let shouldBeChunked = dlChunkSize !== 0 && (!format.hasAudio || !format.hasVideo);
+
+    if (shouldBeChunked) {
+      let start = (options.range && options.range.start) || 0;
+      let end = start + dlChunkSize;
+      const rangeEnd = options.range && options.range.end;
+
+      contentLength = options.range ?
+        (rangeEnd ? rangeEnd + 1 : parseInt(format.contentLength)) - start :
+        parseInt(format.contentLength);
+
+      const getNextChunk = () => {
+        if (!rangeEnd && end >= contentLength) end = 0;
+        if (rangeEnd && end > rangeEnd) end = rangeEnd;
+        shouldEnd = !end || end === rangeEnd;
+
+        requestOptions.headers = Object.assign({}, requestOptions.headers, {
+          Range: `bytes=${start}-${end || ''}`,
+        });
+
+        req = miniget(format.url, requestOptions);
+        req.on('data', ondata);
+        req.on('end', () => {
+          if (stream.destroyed) { return; }
+          if (end && end !== rangeEnd) {
+            start = end + 1;
+            end += dlChunkSize;
+            getNextChunk();
+          }
+        });
+        pipeAndSetEvents(req, stream, shouldEnd);
+      };
+      getNextChunk();
+    } else {
+      // Audio only and video only formats don't support begin
+      if (options.begin) {
+        format.url += `&begin=${parseTimestamp(options.begin)}`;
+      }
+      if (options.range && (options.range.start || options.range.end)) {
+        requestOptions.headers = Object.assign({}, requestOptions.headers, {
+          Range: `bytes=${options.range.start || '0'}-${options.range.end || ''}`,
+        });
+      }
+      req = miniget(format.url, requestOptions);
+      req.on('response', res => {
+        if (stream.destroyed) { return; }
+        contentLength = contentLength || parseInt(res.headers['content-length']);
+      });
+      req.on('data', ondata);
+      pipeAndSetEvents(req, stream, shouldEnd);
+    }
+  }
+
+  stream._destroy = () => {
+    stream.destroyed = true;
+    req.destroy();
+    req.end();
+  };
+};
+
+
+/**
+ * Can be used to download video after its `info` is gotten through
+ * `ytdl.getInfo()`. In case the user might want to look at the
+ * `info` object before deciding to download.
+ *
+ * @param {Object} info
+ * @param {!Object} options
+ * @returns {ReadableStream}
+ */
+ytdl.downloadFromInfo = (info, options) => {
+  const stream = createStream(options);
+  if (!info.full) {
+    throw Error('Cannot use `ytdl.downloadFromInfo()` when called ' +
+      'with info from `ytdl.getBasicInfo()`');
+  }
+  setImmediate(() => {
+    downloadFromInfoCallback(stream, info, options);
+  });
+  return stream;
+};
+
+}).call(this)}).call(this,require("timers").setImmediate)
+},{"../package.json":120,"./format-utils":112,"./info":116,"./sig":117,"./url-utils":118,"./utils":119,"m3u8stream":105,"miniget":109,"stream":54,"timers":91}],115:[function(require,module,exports){
+const utils = require('./utils');
+const qs = require('querystring');
+const { parseTimestamp } = require('m3u8stream');
+
+
+const BASE_URL = 'https://www.youtube.com/watch?v=';
+const TITLE_TO_CATEGORY = {
+  song: { name: 'Music', url: 'https://music.youtube.com/' },
+};
+
+const getText = obj => obj ? obj.runs ? obj.runs[0].text : obj.simpleText : null;
+
+
+/**
+ * Get video media.
+ *
+ * @param {Object} info
+ * @returns {Object}
+ */
+exports.getMedia = info => {
+  let media = {};
+  let results = [];
+  try {
+    results = info.response.contents.twoColumnWatchNextResults.results.results.contents;
+  } catch (err) {
+    // Do nothing
+  }
+
+  let result = results.find(v => v.videoSecondaryInfoRenderer);
+  if (!result) { return {}; }
+
+  try {
+    let metadataRows =
+      (result.metadataRowContainer || result.videoSecondaryInfoRenderer.metadataRowContainer)
+        .metadataRowContainerRenderer.rows;
+    for (let row of metadataRows) {
+      if (row.metadataRowRenderer) {
+        let title = getText(row.metadataRowRenderer.title).toLowerCase();
+        let contents = row.metadataRowRenderer.contents[0];
+        media[title] = getText(contents);
+        let runs = contents.runs;
+        if (runs && runs[0].navigationEndpoint) {
+          media[`${title}_url`] = new URL(
+            runs[0].navigationEndpoint.commandMetadata.webCommandMetadata.url, BASE_URL).toString();
+        }
+        if (title in TITLE_TO_CATEGORY) {
+          media.category = TITLE_TO_CATEGORY[title].name;
+          media.category_url = TITLE_TO_CATEGORY[title].url;
+        }
+      } else if (row.richMetadataRowRenderer) {
+        let contents = row.richMetadataRowRenderer.contents;
+        let boxArt = contents
+          .filter(meta => meta.richMetadataRenderer.style === 'RICH_METADATA_RENDERER_STYLE_BOX_ART');
+        for (let { richMetadataRenderer } of boxArt) {
+          let meta = richMetadataRenderer;
+          media.year = getText(meta.subtitle);
+          let type = getText(meta.callToAction).split(' ')[1];
+          media[type] = getText(meta.title);
+          media[`${type}_url`] = new URL(
+            meta.endpoint.commandMetadata.webCommandMetadata.url, BASE_URL).toString();
+          media.thumbnails = meta.thumbnail.thumbnails;
+        }
+        let topic = contents
+          .filter(meta => meta.richMetadataRenderer.style === 'RICH_METADATA_RENDERER_STYLE_TOPIC');
+        for (let { richMetadataRenderer } of topic) {
+          let meta = richMetadataRenderer;
+          media.category = getText(meta.title);
+          media.category_url = new URL(
+            meta.endpoint.commandMetadata.webCommandMetadata.url, BASE_URL).toString();
+        }
+      }
+    }
+  } catch (err) {
+    // Do nothing.
+  }
+
+  return media;
+};
+
+
+const isVerified = badges => !!(badges && badges.find(b => b.metadataBadgeRenderer.tooltip === 'Verified'));
+
+
+/**
+ * Get video author.
+ *
+ * @param {Object} info
+ * @returns {Object}
+ */
+exports.getAuthor = info => {
+  let channelId, thumbnails = [], subscriberCount, verified = false;
+  try {
+    let results = info.response.contents.twoColumnWatchNextResults.results.results.contents;
+    let v = results.find(v2 =>
+      v2.videoSecondaryInfoRenderer &&
+      v2.videoSecondaryInfoRenderer.owner &&
+      v2.videoSecondaryInfoRenderer.owner.videoOwnerRenderer);
+    let videoOwnerRenderer = v.videoSecondaryInfoRenderer.owner.videoOwnerRenderer;
+    channelId = videoOwnerRenderer.navigationEndpoint.browseEndpoint.browseId;
+    thumbnails = videoOwnerRenderer.thumbnail.thumbnails.map(thumbnail => {
+      thumbnail.url = new URL(thumbnail.url, BASE_URL).toString();
+      return thumbnail;
+    });
+    subscriberCount = utils.parseAbbreviatedNumber(getText(videoOwnerRenderer.subscriberCountText));
+    verified = isVerified(videoOwnerRenderer.badges);
+  } catch (err) {
+    // Do nothing.
+  }
+  try {
+    let videoDetails = info.player_response.microformat && info.player_response.microformat.playerMicroformatRenderer;
+    let id = (videoDetails && videoDetails.channelId) || channelId || info.player_response.videoDetails.channelId;
+    let author = {
+      id: id,
+      name: videoDetails ? videoDetails.ownerChannelName : info.player_response.videoDetails.author,
+      user: videoDetails ? videoDetails.ownerProfileUrl.split('/').slice(-1)[0] : null,
+      channel_url: `https://www.youtube.com/channel/${id}`,
+      external_channel_url: videoDetails ? `https://www.youtube.com/channel/${videoDetails.externalChannelId}` : '',
+      user_url: videoDetails ? new URL(videoDetails.ownerProfileUrl, BASE_URL).toString() : '',
+      thumbnails,
+      verified,
+      subscriber_count: subscriberCount,
+    };
+    if (thumbnails.length) {
+      utils.deprecate(author, 'avatar', author.thumbnails[0].url, 'author.avatar', 'author.thumbnails[0].url');
+    }
+    return author;
+  } catch (err) {
+    return {};
+  }
+};
+
+const parseRelatedVideo = (details, rvsParams) => {
+  if (!details) return;
+  try {
+    let viewCount = getText(details.viewCountText);
+    let shortViewCount = getText(details.shortViewCountText);
+    let rvsDetails = rvsParams.find(elem => elem.id === details.videoId);
+    if (!/^\d/.test(shortViewCount)) {
+      shortViewCount = (rvsDetails && rvsDetails.short_view_count_text) || '';
+    }
+    viewCount = (/^\d/.test(viewCount) ? viewCount : shortViewCount).split(' ')[0];
+    let browseEndpoint = details.shortBylineText.runs[0].navigationEndpoint.browseEndpoint;
+    let channelId = browseEndpoint.browseId;
+    let name = getText(details.shortBylineText);
+    let user = (browseEndpoint.canonicalBaseUrl || '').split('/').slice(-1)[0];
+    let video = {
+      id: details.videoId,
+      title: getText(details.title),
+      published: getText(details.publishedTimeText),
+      author: {
+        id: channelId,
+        name,
+        user,
+        channel_url: `https://www.youtube.com/channel/${channelId}`,
+        user_url: `https://www.youtube.com/user/${user}`,
+        thumbnails: details.channelThumbnail.thumbnails.map(thumbnail => {
+          thumbnail.url = new URL(thumbnail.url, BASE_URL).toString();
+          return thumbnail;
+        }),
+        verified: isVerified(details.ownerBadges),
+
+        [Symbol.toPrimitive]() {
+          console.warn(`\`relatedVideo.author\` will be removed in a near future release, ` +
+            `use \`relatedVideo.author.name\` instead.`);
+          return video.author.name;
+        },
+
+      },
+      short_view_count_text: shortViewCount.split(' ')[0],
+      view_count: viewCount.replace(/,/g, ''),
+      length_seconds: details.lengthText ?
+        Math.floor(parseTimestamp(getText(details.lengthText)) / 1000) :
+        rvsParams && `${rvsParams.length_seconds}`,
+      thumbnails: details.thumbnail.thumbnails,
+      richThumbnails:
+        details.richThumbnail ?
+          details.richThumbnail.movingThumbnailRenderer.movingThumbnailDetails.thumbnails : [],
+      isLive: !!(details.badges && details.badges.find(b => b.metadataBadgeRenderer.label === 'LIVE NOW')),
+    };
+
+    utils.deprecate(video, 'author_thumbnail', video.author.thumbnails[0].url,
+      'relatedVideo.author_thumbnail', 'relatedVideo.author.thumbnails[0].url');
+    utils.deprecate(video, 'ucid', video.author.id, 'relatedVideo.ucid', 'relatedVideo.author.id');
+    utils.deprecate(video, 'video_thumbnail', video.thumbnails[0].url,
+      'relatedVideo.video_thumbnail', 'relatedVideo.thumbnails[0].url');
+    return video;
+  } catch (err) {
+    // Skip.
+  }
+};
+
+/**
+ * Get related videos.
+ *
+ * @param {Object} info
+ * @returns {Array.<Object>}
+ */
+exports.getRelatedVideos = info => {
+  let rvsParams = [], secondaryResults = [];
+  try {
+    rvsParams = info.response.webWatchNextResponseExtensionData.relatedVideoArgs.split(',').map(e => qs.parse(e));
+  } catch (err) {
+    // Do nothing.
+  }
+  try {
+    secondaryResults = info.response.contents.twoColumnWatchNextResults.secondaryResults.secondaryResults.results;
+  } catch (err) {
+    return [];
+  }
+  let videos = [];
+  for (let result of secondaryResults || []) {
+    let details = result.compactVideoRenderer;
+    if (details) {
+      let video = parseRelatedVideo(details, rvsParams);
+      if (video) videos.push(video);
+    } else {
+      let autoplay = result.compactAutoplayRenderer || result.itemSectionRenderer;
+      if (!autoplay || !Array.isArray(autoplay.contents)) continue;
+      for (let content of autoplay.contents) {
+        let video = parseRelatedVideo(content.compactVideoRenderer, rvsParams);
+        if (video) videos.push(video);
+      }
+    }
+  }
+  return videos;
+};
+
+/**
+ * Get like count.
+ *
+ * @param {Object} info
+ * @returns {number}
+ */
+exports.getLikes = info => {
+  try {
+    let contents = info.response.contents.twoColumnWatchNextResults.results.results.contents;
+    let video = contents.find(r => r.videoPrimaryInfoRenderer);
+    let buttons = video.videoPrimaryInfoRenderer.videoActions.menuRenderer.topLevelButtons;
+    let like = buttons.find(b => b.toggleButtonRenderer &&
+      b.toggleButtonRenderer.defaultIcon.iconType === 'LIKE');
+    return parseInt(like.toggleButtonRenderer.defaultText.accessibility.accessibilityData.label.replace(/\D+/g, ''));
+  } catch (err) {
+    return null;
+  }
+};
+
+/**
+ * Get dislike count.
+ *
+ * @param {Object} info
+ * @returns {number}
+ */
+exports.getDislikes = info => {
+  try {
+    let contents = info.response.contents.twoColumnWatchNextResults.results.results.contents;
+    let video = contents.find(r => r.videoPrimaryInfoRenderer);
+    let buttons = video.videoPrimaryInfoRenderer.videoActions.menuRenderer.topLevelButtons;
+    let dislike = buttons.find(b => b.toggleButtonRenderer &&
+      b.toggleButtonRenderer.defaultIcon.iconType === 'DISLIKE');
+    return parseInt(dislike.toggleButtonRenderer.defaultText.accessibility.accessibilityData.label.replace(/\D+/g, ''));
+  } catch (err) {
+    return null;
+  }
+};
+
+/**
+ * Cleans up a few fields on `videoDetails`.
+ *
+ * @param {Object} videoDetails
+ * @param {Object} info
+ * @returns {Object}
+ */
+exports.cleanVideoDetails = (videoDetails, info) => {
+  videoDetails.thumbnails = videoDetails.thumbnail.thumbnails;
+  delete videoDetails.thumbnail;
+  utils.deprecate(videoDetails, 'thumbnail', { thumbnails: videoDetails.thumbnails },
+    'videoDetails.thumbnail.thumbnails', 'videoDetails.thumbnails');
+  videoDetails.description = videoDetails.shortDescription || getText(videoDetails.description);
+  delete videoDetails.shortDescription;
+  utils.deprecate(videoDetails, 'shortDescription', videoDetails.description,
+    'videoDetails.shortDescription', 'videoDetails.description');
+
+  // Use more reliable `lengthSeconds` from `playerMicroformatRenderer`.
+  videoDetails.lengthSeconds =
+    (info.player_response.microformat &&
+    info.player_response.microformat.playerMicroformatRenderer.lengthSeconds) ||
+    info.player_response.videoDetails.lengthSeconds;
+  return videoDetails;
+};
+
+/**
+ * Get storyboards info.
+ *
+ * @param {Object} info
+ * @returns {Array.<Object>}
+ */
+exports.getStoryboards = info => {
+  const parts = info.player_response.storyboards &&
+    info.player_response.storyboards.playerStoryboardSpecRenderer &&
+    info.player_response.storyboards.playerStoryboardSpecRenderer.spec &&
+    info.player_response.storyboards.playerStoryboardSpecRenderer.spec.split('|');
+
+  if (!parts) return [];
+
+  const url = new URL(parts.shift());
+
+  return parts.map((part, i) => {
+    let [
+      thumbnailWidth,
+      thumbnailHeight,
+      thumbnailCount,
+      columns,
+      rows,
+      interval,
+      nameReplacement,
+      sigh,
+    ] = part.split('#');
+
+    url.searchParams.set('sigh', sigh);
+
+    thumbnailCount = parseInt(thumbnailCount, 10);
+    columns = parseInt(columns, 10);
+    rows = parseInt(rows, 10);
+
+    const storyboardCount = Math.ceil(thumbnailCount / (columns * rows));
+
+    return {
+      templateUrl: url.toString().replace('$L', i).replace('$N', nameReplacement),
+      thumbnailWidth: parseInt(thumbnailWidth, 10),
+      thumbnailHeight: parseInt(thumbnailHeight, 10),
+      thumbnailCount,
+      interval: parseInt(interval, 10),
+      columns,
+      rows,
+      storyboardCount,
+    };
+  });
+};
+
+/**
+ * Get chapters info.
+ *
+ * @param {Object} info
+ * @returns {Array.<Object>}
+ */
+exports.getChapters = info => {
+  const playerOverlayRenderer = info.response &&
+    info.response.playerOverlays &&
+    info.response.playerOverlays.playerOverlayRenderer;
+  const playerBar = playerOverlayRenderer &&
+    playerOverlayRenderer.decoratedPlayerBarRenderer &&
+    playerOverlayRenderer.decoratedPlayerBarRenderer.decoratedPlayerBarRenderer &&
+    playerOverlayRenderer.decoratedPlayerBarRenderer.decoratedPlayerBarRenderer.playerBar;
+  const markersMap = playerBar &&
+    playerBar.multiMarkersPlayerBarRenderer &&
+    playerBar.multiMarkersPlayerBarRenderer.markersMap;
+  const marker = Array.isArray(markersMap) && markersMap.find(m => m.value && Array.isArray(m.value.chapters));
+  if (!marker) return [];
+  const chapters = marker.value.chapters;
+
+  return chapters.map(chapter => ({
+    title: getText(chapter.chapterRenderer.title),
+    start_time: chapter.chapterRenderer.timeRangeStartMillis / 1000,
+  }));
+};
+
+},{"./utils":119,"m3u8stream":105,"querystring":51}],116:[function(require,module,exports){
+const querystring = require('querystring');
+const sax = require('sax');
+const miniget = require('miniget');
+const utils = require('./utils');
+// Forces Node JS version of setTimeout for Electron based applications
+const { setTimeout } = require('timers');
+const formatUtils = require('./format-utils');
+const urlUtils = require('./url-utils');
+const extras = require('./info-extras');
+const sig = require('./sig');
+const Cache = require('./cache');
+
+
+const BASE_URL = 'https://www.youtube.com/watch?v=';
+
+
+// Cached for storing basic/full info.
+exports.cache = new Cache();
+exports.cookieCache = new Cache(1000 * 60 * 60 * 24);
+exports.watchPageCache = new Cache();
+// Cache for cver used in getVideoInfoPage
+let cver = '2.20210622.10.00';
+
+
+// Special error class used to determine if an error is unrecoverable,
+// as in, ytdl-core should not try again to fetch the video metadata.
+// In this case, the video is usually unavailable in some way.
+class UnrecoverableError extends Error {}
+
+
+// List of URLs that show up in `notice_url` for age restricted videos.
+const AGE_RESTRICTED_URLS = [
+  'support.google.com/youtube/?p=age_restrictions',
+  'youtube.com/t/community_guidelines',
+];
+
+
+/**
+ * Gets info from a video without getting additional formats.
+ *
+ * @param {string} id
+ * @param {Object} options
+ * @returns {Promise<Object>}
+*/
+exports.getBasicInfo = async(id, options) => {
+  const retryOptions = Object.assign({}, miniget.defaultOptions, options.requestOptions);
+  options.requestOptions = Object.assign({}, options.requestOptions, {});
+  options.requestOptions.headers = Object.assign({},
+    {
+      // eslint-disable-next-line max-len
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.101 Safari/537.36',
+    }, options.requestOptions.headers);
+  const validate = info => {
+    let playErr = utils.playError(info.player_response, ['ERROR'], UnrecoverableError);
+    let privateErr = privateVideoError(info.player_response);
+    if (playErr || privateErr) {
+      throw playErr || privateErr;
+    }
+    return info && info.player_response && (
+      info.player_response.streamingData || isRental(info.player_response) || isNotYetBroadcasted(info.player_response)
+    );
+  };
+  let info = await pipeline([id, options], validate, retryOptions, [
+    getWatchHTMLPage,
+    getWatchJSONPage,
+    getVideoInfoPage,
+  ]);
+
+  Object.assign(info, {
+    formats: parseFormats(info.player_response),
+    related_videos: extras.getRelatedVideos(info),
+  });
+
+  // Add additional properties to info.
+  const media = extras.getMedia(info);
+  const additional = {
+    author: extras.getAuthor(info),
+    media,
+    likes: extras.getLikes(info),
+    dislikes: extras.getDislikes(info),
+    age_restricted: !!(media && media.notice_url && AGE_RESTRICTED_URLS.some(url => media.notice_url.includes(url))),
+
+    // Give the standard link to the video.
+    video_url: BASE_URL + id,
+    storyboards: extras.getStoryboards(info),
+    chapters: extras.getChapters(info),
+  };
+
+  info.videoDetails = extras.cleanVideoDetails(Object.assign({},
+    info.player_response && info.player_response.microformat &&
+    info.player_response.microformat.playerMicroformatRenderer,
+    info.player_response && info.player_response.videoDetails, additional), info);
+
+  return info;
+};
+
+const privateVideoError = player_response => {
+  let playability = player_response && player_response.playabilityStatus;
+  if (playability && playability.status === 'LOGIN_REQUIRED' && playability.messages &&
+    playability.messages.filter(m => /This is a private video/.test(m)).length) {
+    return new UnrecoverableError(playability.reason || (playability.messages && playability.messages[0]));
+  } else {
+    return null;
+  }
+};
+
+
+const isRental = player_response => {
+  let playability = player_response.playabilityStatus;
+  return playability && playability.status === 'UNPLAYABLE' &&
+    playability.errorScreen && playability.errorScreen.playerLegacyDesktopYpcOfferRenderer;
+};
+
+
+const isNotYetBroadcasted = player_response => {
+  let playability = player_response.playabilityStatus;
+  return playability && playability.status === 'LIVE_STREAM_OFFLINE';
+};
+
+
+const getWatchHTMLURL = (id, options) => `${BASE_URL + id}&hl=${options.lang || 'en'}`;
+const getWatchHTMLPageBody = (id, options) => {
+  const url = getWatchHTMLURL(id, options);
+  return exports.watchPageCache.getOrSet(url, () => utils.exposedMiniget(url, options).text());
+};
+
+
+const EMBED_URL = 'https://www.youtube.com/embed/';
+const getEmbedPageBody = (id, options) => {
+  const embedUrl = `${EMBED_URL + id}?hl=${options.lang || 'en'}`;
+  return utils.exposedMiniget(embedUrl, options).text();
+};
+
+
+const getHTML5player = body => {
+  let html5playerRes =
+    /<script\s+src="([^"]+)"(?:\s+type="text\/javascript")?\s+name="player_ias\/base"\s*>|"jsUrl":"([^"]+)"/
+      .exec(body);
+  return html5playerRes ? html5playerRes[1] || html5playerRes[2] : null;
+};
+
+
+const getIdentityToken = (id, options, key, throwIfNotFound) =>
+  exports.cookieCache.getOrSet(key, async() => {
+    let page = await getWatchHTMLPageBody(id, options);
+    let match = page.match(/(["'])ID_TOKEN\1[:,]\s?"([^"]+)"/);
+    if (!match && throwIfNotFound) {
+      throw new UnrecoverableError('Cookie header used in request, but unable to find YouTube identity token');
+    }
+    return match && match[2];
+  });
+
+
+/**
+ * Goes through each endpoint in the pipeline, retrying on failure if the error is recoverable.
+ * If unable to succeed with one endpoint, moves onto the next one.
+ *
+ * @param {Array.<Object>} args
+ * @param {Function} validate
+ * @param {Object} retryOptions
+ * @param {Array.<Function>} endpoints
+ * @returns {[Object, Object, Object]}
+ */
+const pipeline = async(args, validate, retryOptions, endpoints) => {
+  let info;
+  for (let func of endpoints) {
+    try {
+      const newInfo = await retryFunc(func, args.concat([info]), retryOptions);
+      if (newInfo.player_response) {
+        newInfo.player_response.videoDetails = assign(
+          info && info.player_response && info.player_response.videoDetails,
+          newInfo.player_response.videoDetails);
+        newInfo.player_response = assign(info && info.player_response, newInfo.player_response);
+      }
+      info = assign(info, newInfo);
+      if (validate(info, false)) {
+        break;
+      }
+    } catch (err) {
+      if (err instanceof UnrecoverableError || func === endpoints[endpoints.length - 1]) {
+        throw err;
+      }
+      // Unable to find video metadata... so try next endpoint.
+    }
+  }
+  return info;
+};
+
+
+/**
+ * Like Object.assign(), but ignores `null` and `undefined` from `source`.
+ *
+ * @param {Object} target
+ * @param {Object} source
+ * @returns {Object}
+ */
+const assign = (target, source) => {
+  if (!target || !source) { return target || source; }
+  for (let [key, value] of Object.entries(source)) {
+    if (value !== null && value !== undefined) {
+      target[key] = value;
+    }
+  }
+  return target;
+};
+
+
+/**
+ * Given a function, calls it with `args` until it's successful,
+ * or until it encounters an unrecoverable error.
+ * Currently, any error from miniget is considered unrecoverable. Errors such as
+ * too many redirects, invalid URL, status code 404, status code 502.
+ *
+ * @param {Function} func
+ * @param {Array.<Object>} args
+ * @param {Object} options
+ * @param {number} options.maxRetries
+ * @param {Object} options.backoff
+ * @param {number} options.backoff.inc
+ */
+const retryFunc = async(func, args, options) => {
+  let currentTry = 0, result;
+  while (currentTry <= options.maxRetries) {
+    try {
+      result = await func(...args);
+      break;
+    } catch (err) {
+      if (err instanceof UnrecoverableError ||
+        (err instanceof miniget.MinigetError && err.statusCode < 500) || currentTry >= options.maxRetries) {
+        throw err;
+      }
+      let wait = Math.min(++currentTry * options.backoff.inc, options.backoff.max);
+      await new Promise(resolve => setTimeout(resolve, wait));
+    }
+  }
+  return result;
+};
+
+
+const jsonClosingChars = /^[)\]}'\s]+/;
+const parseJSON = (source, varName, json) => {
+  if (!json || typeof json === 'object') {
+    return json;
+  } else {
+    try {
+      json = json.replace(jsonClosingChars, '');
+      return JSON.parse(json);
+    } catch (err) {
+      throw Error(`Error parsing ${varName} in ${source}: ${err.message}`);
+    }
+  }
+};
+
+
+const findJSON = (source, varName, body, left, right, prependJSON) => {
+  let jsonStr = utils.between(body, left, right);
+  if (!jsonStr) {
+    throw Error(`Could not find ${varName} in ${source}`);
+  }
+  return parseJSON(source, varName, utils.cutAfterJSON(`${prependJSON}${jsonStr}`));
+};
+
+
+const findPlayerResponse = (source, info) => {
+  const player_response = info && (
+    (info.args && info.args.player_response) ||
+    info.player_response || info.playerResponse || info.embedded_player_response);
+  return parseJSON(source, 'player_response', player_response);
+};
+
+
+const getWatchJSONURL = (id, options) => `${getWatchHTMLURL(id, options)}&pbj=1`;
+const getWatchJSONPage = async(id, options) => {
+  const reqOptions = Object.assign({ headers: {} }, options.requestOptions);
+  let cookie = reqOptions.headers.Cookie || reqOptions.headers.cookie;
+  reqOptions.headers = Object.assign({
+    'x-youtube-client-name': '1',
+    'x-youtube-client-version': cver,
+    'x-youtube-identity-token': exports.cookieCache.get(cookie || 'browser') || '',
+  }, reqOptions.headers);
+
+  const setIdentityToken = async(key, throwIfNotFound) => {
+    if (reqOptions.headers['x-youtube-identity-token']) { return; }
+    reqOptions.headers['x-youtube-identity-token'] = await getIdentityToken(id, options, key, throwIfNotFound);
+  };
+
+  if (cookie) {
+    await setIdentityToken(cookie, true);
+  }
+
+  const jsonUrl = getWatchJSONURL(id, options);
+  const body = await utils.exposedMiniget(jsonUrl, options, reqOptions).text();
+  let parsedBody = parseJSON('watch.json', 'body', body);
+  if (parsedBody.reload === 'now') {
+    await setIdentityToken('browser', false);
+  }
+  if (parsedBody.reload === 'now' || !Array.isArray(parsedBody)) {
+    throw Error('Unable to retrieve video metadata in watch.json');
+  }
+  let info = parsedBody.reduce((part, curr) => Object.assign(curr, part), {});
+  info.player_response = findPlayerResponse('watch.json', info);
+  info.html5player = info.player && info.player.assets && info.player.assets.js;
+
+  return info;
+};
+
+
+const getWatchHTMLPage = async(id, options) => {
+  let body = await getWatchHTMLPageBody(id, options);
+  let info = { page: 'watch' };
+  try {
+    cver = utils.between(body, '{"key":"cver","value":"', '"}');
+    info.player_response = findJSON('watch.html', 'player_response',
+      body, /\bytInitialPlayerResponse\s*=\s*\{/i, '</script>', '{');
+  } catch (err) {
+    let args = findJSON('watch.html', 'player_response', body, /\bytplayer\.config\s*=\s*{/, '</script>', '{');
+    info.player_response = findPlayerResponse('watch.html', args);
+  }
+  info.response = findJSON('watch.html', 'response', body, /\bytInitialData("\])?\s*=\s*\{/i, '</script>', '{');
+  info.html5player = getHTML5player(body);
+  return info;
+};
+
+
+const INFO_HOST = 'www.youtube.com';
+const INFO_PATH = '/get_video_info';
+const VIDEO_EURL = 'https://youtube.googleapis.com/v/';
+const getVideoInfoPage = async(id, options) => {
+  const url = new URL(`https://${INFO_HOST}${INFO_PATH}`);
+  url.searchParams.set('video_id', id);
+  url.searchParams.set('c', 'TVHTML5');
+  url.searchParams.set('cver', `7${cver.substr(1)}`);
+  url.searchParams.set('eurl', VIDEO_EURL + id);
+  url.searchParams.set('ps', 'default');
+  url.searchParams.set('gl', 'US');
+  url.searchParams.set('hl', options.lang || 'en');
+  url.searchParams.set('html5', '1');
+  const body = await utils.exposedMiniget(url.toString(), options).text();
+  let info = querystring.parse(body);
+  info.player_response = findPlayerResponse('get_video_info', info);
+  return info;
+};
+
+
+/**
+ * @param {Object} player_response
+ * @returns {Array.<Object>}
+ */
+const parseFormats = player_response => {
+  let formats = [];
+  if (player_response && player_response.streamingData) {
+    formats = formats
+      .concat(player_response.streamingData.formats || [])
+      .concat(player_response.streamingData.adaptiveFormats || []);
+  }
+  return formats;
+};
+
+
+/**
+ * Gets info from a video additional formats and deciphered URLs.
+ *
+ * @param {string} id
+ * @param {Object} options
+ * @returns {Promise<Object>}
+ */
+exports.getInfo = async(id, options) => {
+  let info = await exports.getBasicInfo(id, options);
+  const hasManifest =
+    info.player_response && info.player_response.streamingData && (
+      info.player_response.streamingData.dashManifestUrl ||
+      info.player_response.streamingData.hlsManifestUrl
+    );
+  let funcs = [];
+  if (info.formats.length) {
+    info.html5player = info.html5player ||
+      getHTML5player(await getWatchHTMLPageBody(id, options)) || getHTML5player(await getEmbedPageBody(id, options));
+    if (!info.html5player) {
+      throw Error('Unable to find html5player file');
+    }
+    const html5player = new URL(info.html5player, BASE_URL).toString();
+    funcs.push(sig.decipherFormats(info.formats, html5player, options));
+  }
+  if (hasManifest && info.player_response.streamingData.dashManifestUrl) {
+    let url = info.player_response.streamingData.dashManifestUrl;
+    funcs.push(getDashManifest(url, options));
+  }
+  if (hasManifest && info.player_response.streamingData.hlsManifestUrl) {
+    let url = info.player_response.streamingData.hlsManifestUrl;
+    funcs.push(getM3U8(url, options));
+  }
+
+  let results = await Promise.all(funcs);
+  info.formats = Object.values(Object.assign({}, ...results));
+  info.formats = info.formats.map(formatUtils.addFormatMeta);
+  info.formats.sort(formatUtils.sortFormats);
+  info.full = true;
+  return info;
+};
+
+
+/**
+ * Gets additional DASH formats.
+ *
+ * @param {string} url
+ * @param {Object} options
+ * @returns {Promise<Array.<Object>>}
+ */
+const getDashManifest = (url, options) => new Promise((resolve, reject) => {
+  let formats = {};
+  const parser = sax.parser(false);
+  parser.onerror = reject;
+  let adaptationSet;
+  parser.onopentag = node => {
+    if (node.name === 'ADAPTATIONSET') {
+      adaptationSet = node.attributes;
+    } else if (node.name === 'REPRESENTATION') {
+      const itag = parseInt(node.attributes.ID);
+      if (!isNaN(itag)) {
+        formats[url] = Object.assign({
+          itag, url,
+          bitrate: parseInt(node.attributes.BANDWIDTH),
+          mimeType: `${adaptationSet.MIMETYPE}; codecs="${node.attributes.CODECS}"`,
+        }, node.attributes.HEIGHT ? {
+          width: parseInt(node.attributes.WIDTH),
+          height: parseInt(node.attributes.HEIGHT),
+          fps: parseInt(node.attributes.FRAMERATE),
+        } : {
+          audioSampleRate: node.attributes.AUDIOSAMPLINGRATE,
+        });
+      }
+    }
+  };
+  parser.onend = () => { resolve(formats); };
+  const req = utils.exposedMiniget(new URL(url, BASE_URL).toString(), options);
+  req.setEncoding('utf8');
+  req.on('error', reject);
+  req.on('data', chunk => { parser.write(chunk); });
+  req.on('end', parser.close.bind(parser));
+});
+
+
+/**
+ * Gets additional formats.
+ *
+ * @param {string} url
+ * @param {Object} options
+ * @returns {Promise<Array.<Object>>}
+ */
+const getM3U8 = async(url, options) => {
+  url = new URL(url, BASE_URL);
+  const body = await utils.exposedMiniget(url.toString(), options).text();
+  let formats = {};
+  body
+    .split('\n')
+    .filter(line => /^https?:\/\//.test(line))
+    .forEach(line => {
+      const itag = parseInt(line.match(/\/itag\/(\d+)\//)[1]);
+      formats[line] = { itag, url: line };
+    });
+  return formats;
+};
+
+
+// Cache get info functions.
+// In case a user wants to get a video's info before downloading.
+for (let funcName of ['getBasicInfo', 'getInfo']) {
+  /**
+   * @param {string} link
+   * @param {Object} options
+   * @returns {Promise<Object>}
+   */
+  const func = exports[funcName];
+  exports[funcName] = async(link, options = {}) => {
+    utils.checkForUpdates();
+    let id = await urlUtils.getVideoID(link);
+    const key = [funcName, id, options.lang].join('-');
+    return exports.cache.getOrSet(key, () => func(id, options));
+  };
+}
+
+
+// Export a few helpers.
+exports.validateID = urlUtils.validateID;
+exports.validateURL = urlUtils.validateURL;
+exports.getURLVideoID = urlUtils.getURLVideoID;
+exports.getVideoID = urlUtils.getVideoID;
+
+},{"./cache":111,"./format-utils":112,"./info-extras":115,"./sig":117,"./url-utils":118,"./utils":119,"miniget":109,"querystring":51,"sax":110,"timers":91}],117:[function(require,module,exports){
+const querystring = require('querystring');
+const Cache = require('./cache');
+const utils = require('./utils');
+
+
+// A shared cache to keep track of html5player.js tokens.
+exports.cache = new Cache();
+
+
+/**
+ * Extract signature deciphering tokens from html5player file.
+ *
+ * @param {string} html5playerfile
+ * @param {Object} options
+ * @returns {Promise<Array.<string>>}
+ */
+exports.getTokens = (html5playerfile, options) => exports.cache.getOrSet(html5playerfile, async() => {
+  const body = await utils.exposedMiniget(html5playerfile, options).text();
+  const tokens = exports.extractActions(body);
+  if (!tokens || !tokens.length) {
+    throw Error('Could not extract signature deciphering actions');
+  }
+  exports.cache.set(html5playerfile, tokens);
+  return tokens;
+});
+
+
+/**
+ * Decipher a signature based on action tokens.
+ *
+ * @param {Array.<string>} tokens
+ * @param {string} sig
+ * @returns {string}
+ */
+exports.decipher = (tokens, sig) => {
+  sig = sig.split('');
+  for (let i = 0, len = tokens.length; i < len; i++) {
+    let token = tokens[i], pos;
+    switch (token[0]) {
+      case 'r':
+        sig = sig.reverse();
+        break;
+      case 'w':
+        pos = ~~token.slice(1);
+        sig = swapHeadAndPosition(sig, pos);
+        break;
+      case 's':
+        pos = ~~token.slice(1);
+        sig = sig.slice(pos);
+        break;
+      case 'p':
+        pos = ~~token.slice(1);
+        sig.splice(0, pos);
+        break;
+    }
+  }
+  return sig.join('');
+};
+
+
+/**
+ * Swaps the first element of an array with one of given position.
+ *
+ * @param {Array.<Object>} arr
+ * @param {number} position
+ * @returns {Array.<Object>}
+ */
+const swapHeadAndPosition = (arr, position) => {
+  const first = arr[0];
+  arr[0] = arr[position % arr.length];
+  arr[position] = first;
+  return arr;
+};
+
+
+const jsVarStr = '[a-zA-Z_\\$][a-zA-Z_0-9]*';
+const jsSingleQuoteStr = `'[^'\\\\]*(:?\\\\[\\s\\S][^'\\\\]*)*'`;
+const jsDoubleQuoteStr = `"[^"\\\\]*(:?\\\\[\\s\\S][^"\\\\]*)*"`;
+const jsQuoteStr = `(?:${jsSingleQuoteStr}|${jsDoubleQuoteStr})`;
+const jsKeyStr = `(?:${jsVarStr}|${jsQuoteStr})`;
+const jsPropStr = `(?:\\.${jsVarStr}|\\[${jsQuoteStr}\\])`;
+const jsEmptyStr = `(?:''|"")`;
+const reverseStr = ':function\\(a\\)\\{' +
+  '(?:return )?a\\.reverse\\(\\)' +
+'\\}';
+const sliceStr = ':function\\(a,b\\)\\{' +
+  'return a\\.slice\\(b\\)' +
+'\\}';
+const spliceStr = ':function\\(a,b\\)\\{' +
+  'a\\.splice\\(0,b\\)' +
+'\\}';
+const swapStr = ':function\\(a,b\\)\\{' +
+  'var c=a\\[0\\];a\\[0\\]=a\\[b(?:%a\\.length)?\\];a\\[b(?:%a\\.length)?\\]=c(?:;return a)?' +
+'\\}';
+const actionsObjRegexp = new RegExp(
+  `var (${jsVarStr})=\\{((?:(?:${
+    jsKeyStr}${reverseStr}|${
+    jsKeyStr}${sliceStr}|${
+    jsKeyStr}${spliceStr}|${
+    jsKeyStr}${swapStr
+  }),?\\r?\\n?)+)\\};`);
+const actionsFuncRegexp = new RegExp(`${`function(?: ${jsVarStr})?\\(a\\)\\{` +
+    `a=a\\.split\\(${jsEmptyStr}\\);\\s*` +
+    `((?:(?:a=)?${jsVarStr}`}${
+  jsPropStr
+}\\(a,\\d+\\);)+)` +
+    `return a\\.join\\(${jsEmptyStr}\\)` +
+  `\\}`);
+const reverseRegexp = new RegExp(`(?:^|,)(${jsKeyStr})${reverseStr}`, 'm');
+const sliceRegexp = new RegExp(`(?:^|,)(${jsKeyStr})${sliceStr}`, 'm');
+const spliceRegexp = new RegExp(`(?:^|,)(${jsKeyStr})${spliceStr}`, 'm');
+const swapRegexp = new RegExp(`(?:^|,)(${jsKeyStr})${swapStr}`, 'm');
+
+
+/**
+ * Extracts the actions that should be taken to decipher a signature.
+ *
+ * This searches for a function that performs string manipulations on
+ * the signature. We already know what the 3 possible changes to a signature
+ * are in order to decipher it. There is
+ *
+ * * Reversing the string.
+ * * Removing a number of characters from the beginning.
+ * * Swapping the first character with another position.
+ *
+ * Note, `Array#slice()` used to be used instead of `Array#splice()`,
+ * it's kept in case we encounter any older html5player files.
+ *
+ * After retrieving the function that does this, we can see what actions
+ * it takes on a signature.
+ *
+ * @param {string} body
+ * @returns {Array.<string>}
+ */
+exports.extractActions = body => {
+  const objResult = actionsObjRegexp.exec(body);
+  const funcResult = actionsFuncRegexp.exec(body);
+  if (!objResult || !funcResult) { return null; }
+
+  const obj = objResult[1].replace(/\$/g, '\\$');
+  const objBody = objResult[2].replace(/\$/g, '\\$');
+  const funcBody = funcResult[1].replace(/\$/g, '\\$');
+
+  let result = reverseRegexp.exec(objBody);
+  const reverseKey = result && result[1]
+    .replace(/\$/g, '\\$')
+    .replace(/\$|^'|^"|'$|"$/g, '');
+  result = sliceRegexp.exec(objBody);
+  const sliceKey = result && result[1]
+    .replace(/\$/g, '\\$')
+    .replace(/\$|^'|^"|'$|"$/g, '');
+  result = spliceRegexp.exec(objBody);
+  const spliceKey = result && result[1]
+    .replace(/\$/g, '\\$')
+    .replace(/\$|^'|^"|'$|"$/g, '');
+  result = swapRegexp.exec(objBody);
+  const swapKey = result && result[1]
+    .replace(/\$/g, '\\$')
+    .replace(/\$|^'|^"|'$|"$/g, '');
+
+  const keys = `(${[reverseKey, sliceKey, spliceKey, swapKey].join('|')})`;
+  const myreg = `(?:a=)?${obj
+  }(?:\\.${keys}|\\['${keys}'\\]|\\["${keys}"\\])` +
+    `\\(a,(\\d+)\\)`;
+  const tokenizeRegexp = new RegExp(myreg, 'g');
+  const tokens = [];
+  while ((result = tokenizeRegexp.exec(funcBody)) !== null) {
+    let key = result[1] || result[2] || result[3];
+    switch (key) {
+      case swapKey:
+        tokens.push(`w${result[4]}`);
+        break;
+      case reverseKey:
+        tokens.push('r');
+        break;
+      case sliceKey:
+        tokens.push(`s${result[4]}`);
+        break;
+      case spliceKey:
+        tokens.push(`p${result[4]}`);
+        break;
+    }
+  }
+  return tokens;
+};
+
+
+/**
+ * @param {Object} format
+ * @param {string} sig
+ */
+exports.setDownloadURL = (format, sig) => {
+  let decodedUrl;
+  if (format.url) {
+    decodedUrl = format.url;
+  } else {
+    return;
+  }
+
+  try {
+    decodedUrl = decodeURIComponent(decodedUrl);
+  } catch (err) {
+    return;
+  }
+
+  // Make some adjustments to the final url.
+  const parsedUrl = new URL(decodedUrl);
+
+  // This is needed for a speedier download.
+  // See https://github.com/fent/node-ytdl-core/issues/127
+  parsedUrl.searchParams.set('ratebypass', 'yes');
+
+  if (sig) {
+    // When YouTube provides a `sp` parameter the signature `sig` must go
+    // into the parameter it specifies.
+    // See https://github.com/fent/node-ytdl-core/issues/417
+    parsedUrl.searchParams.set(format.sp || 'signature', sig);
+  }
+
+  format.url = parsedUrl.toString();
+};
+
+
+/**
+ * Applies `sig.decipher()` to all format URL's.
+ *
+ * @param {Array.<Object>} formats
+ * @param {string} html5player
+ * @param {Object} options
+ */
+exports.decipherFormats = async(formats, html5player, options) => {
+  let decipheredFormats = {};
+  let tokens = await exports.getTokens(html5player, options);
+  formats.forEach(format => {
+    let cipher = format.signatureCipher || format.cipher;
+    if (cipher) {
+      Object.assign(format, querystring.parse(cipher));
+      delete format.signatureCipher;
+      delete format.cipher;
+    }
+    const sig = tokens && format.s ? exports.decipher(tokens, format.s) : null;
+    exports.setDownloadURL(format, sig);
+    decipheredFormats[format.url] = format;
+  });
+  return decipheredFormats;
+};
+
+},{"./cache":111,"./utils":119,"querystring":51}],118:[function(require,module,exports){
+/**
+ * Get video ID.
+ *
+ * There are a few type of video URL formats.
+ *  - https://www.youtube.com/watch?v=VIDEO_ID
+ *  - https://m.youtube.com/watch?v=VIDEO_ID
+ *  - https://youtu.be/VIDEO_ID
+ *  - https://www.youtube.com/v/VIDEO_ID
+ *  - https://www.youtube.com/embed/VIDEO_ID
+ *  - https://music.youtube.com/watch?v=VIDEO_ID
+ *  - https://gaming.youtube.com/watch?v=VIDEO_ID
+ *
+ * @param {string} link
+ * @return {string}
+ * @throws {Error} If unable to find a id
+ * @throws {TypeError} If videoid doesn't match specs
+ */
+const validQueryDomains = new Set([
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'music.youtube.com',
+  'gaming.youtube.com',
+]);
+const validPathDomains = /^https?:\/\/(youtu\.be\/|(www\.)?youtube\.com\/(embed|v|shorts)\/)/;
+exports.getURLVideoID = link => {
+  const parsed = new URL(link);
+  let id = parsed.searchParams.get('v');
+  if (validPathDomains.test(link) && !id) {
+    const paths = parsed.pathname.split('/');
+    id = parsed.host === 'youtu.be' ? paths[1] : paths[2];
+  } else if (parsed.hostname && !validQueryDomains.has(parsed.hostname)) {
+    throw Error('Not a YouTube domain');
+  }
+  if (!id) {
+    throw Error(`No video id found: ${link}`);
+  }
+  id = id.substring(0, 11);
+  if (!exports.validateID(id)) {
+    throw TypeError(`Video id (${id}) does not match expected ` +
+      `format (${idRegex.toString()})`);
+  }
+  return id;
+};
+
+
+/**
+ * Gets video ID either from a url or by checking if the given string
+ * matches the video ID format.
+ *
+ * @param {string} str
+ * @returns {string}
+ * @throws {Error} If unable to find a id
+ * @throws {TypeError} If videoid doesn't match specs
+ */
+const urlRegex = /^https?:\/\//;
+exports.getVideoID = str => {
+  if (exports.validateID(str)) {
+    return str;
+  } else if (urlRegex.test(str)) {
+    return exports.getURLVideoID(str);
+  } else {
+    throw Error(`No video id found: ${str}`);
+  }
+};
+
+
+/**
+ * Returns true if given id satifies YouTube's id format.
+ *
+ * @param {string} id
+ * @return {boolean}
+ */
+const idRegex = /^[a-zA-Z0-9-_]{11}$/;
+exports.validateID = id => idRegex.test(id);
+
+
+/**
+ * Checks wether the input string includes a valid id.
+ *
+ * @param {string} string
+ * @returns {boolean}
+ */
+exports.validateURL = string => {
+  try {
+    exports.getURLVideoID(string);
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
+
+},{}],119:[function(require,module,exports){
+(function (process){(function (){
+const miniget = require('miniget');
+
+
+/**
+ * Extract string inbetween another.
+ *
+ * @param {string} haystack
+ * @param {string} left
+ * @param {string} right
+ * @returns {string}
+ */
+exports.between = (haystack, left, right) => {
+  let pos;
+  if (left instanceof RegExp) {
+    const match = haystack.match(left);
+    if (!match) { return ''; }
+    pos = match.index + match[0].length;
+  } else {
+    pos = haystack.indexOf(left);
+    if (pos === -1) { return ''; }
+    pos += left.length;
+  }
+  haystack = haystack.slice(pos);
+  pos = haystack.indexOf(right);
+  if (pos === -1) { return ''; }
+  haystack = haystack.slice(0, pos);
+  return haystack;
+};
+
+
+/**
+ * Get a number from an abbreviated number string.
+ *
+ * @param {string} string
+ * @returns {number}
+ */
+exports.parseAbbreviatedNumber = string => {
+  const match = string
+    .replace(',', '.')
+    .replace(' ', '')
+    .match(/([\d,.]+)([MK]?)/);
+  if (match) {
+    let [, num, multi] = match;
+    num = parseFloat(num);
+    return Math.round(multi === 'M' ? num * 1000000 :
+      multi === 'K' ? num * 1000 : num);
+  }
+  return null;
+};
+
+
+/**
+ * Match begin and end braces of input JSON, return only json
+ *
+ * @param {string} mixedJson
+ * @returns {string}
+*/
+exports.cutAfterJSON = mixedJson => {
+  let open, close;
+  if (mixedJson[0] === '[') {
+    open = '[';
+    close = ']';
+  } else if (mixedJson[0] === '{') {
+    open = '{';
+    close = '}';
+  }
+
+  if (!open) {
+    throw new Error(`Can't cut unsupported JSON (need to begin with [ or { ) but got: ${mixedJson[0]}`);
+  }
+
+  // States if the loop is currently in a string
+  let isString = false;
+
+  // States if the current character is treated as escaped or not
+  let isEscaped = false;
+
+  // Current open brackets to be closed
+  let counter = 0;
+
+  let i;
+  for (i = 0; i < mixedJson.length; i++) {
+    // Toggle the isString boolean when leaving/entering string
+    if (mixedJson[i] === '"' && !isEscaped) {
+      isString = !isString;
+      continue;
+    }
+
+    // Toggle the isEscaped boolean for every backslash
+    // Reset for every regular character
+    isEscaped = mixedJson[i] === '\\' && !isEscaped;
+
+    if (isString) continue;
+
+    if (mixedJson[i] === open) {
+      counter++;
+    } else if (mixedJson[i] === close) {
+      counter--;
+    }
+
+    // All brackets have been closed, thus end of JSON is reached
+    if (counter === 0) {
+      // Return the cut JSON
+      return mixedJson.substr(0, i + 1);
+    }
+  }
+
+  // We ran through the whole string and ended up with an unclosed bracket
+  throw Error("Can't cut unsupported JSON (no matching closing bracket found)");
+};
+
+
+/**
+ * Checks if there is a playability error.
+ *
+ * @param {Object} player_response
+ * @param {Array.<string>} statuses
+ * @param {Error} ErrorType
+ * @returns {!Error}
+ */
+exports.playError = (player_response, statuses, ErrorType = Error) => {
+  let playability = player_response && player_response.playabilityStatus;
+  if (playability && statuses.includes(playability.status)) {
+    return new ErrorType(playability.reason || (playability.messages && playability.messages[0]));
+  }
+  return null;
+};
+
+/**
+ * Does a miniget request and calls options.requestCallback if present
+ *
+ * @param {string} url the request url
+ * @param {Object} options an object with optional requestOptions and requestCallback parameters
+ * @param {Object} requestOptionsOverwrite overwrite of options.requestOptions
+ * @returns {miniget.Stream}
+ */
+exports.exposedMiniget = (url, options = {}, requestOptionsOverwrite) => {
+  const req = miniget(url, requestOptionsOverwrite || options.requestOptions);
+  if (typeof options.requestCallback === 'function') options.requestCallback(req);
+  return req;
+};
+
+/**
+ * Temporary helper to help deprecating a few properties.
+ *
+ * @param {Object} obj
+ * @param {string} prop
+ * @param {Object} value
+ * @param {string} oldPath
+ * @param {string} newPath
+ */
+exports.deprecate = (obj, prop, value, oldPath, newPath) => {
+  Object.defineProperty(obj, prop, {
+    get: () => {
+      console.warn(`\`${oldPath}\` will be removed in a near future release, ` +
+        `use \`${newPath}\` instead.`);
+      return value;
+    },
+  });
+};
+
+
+// Check for updates.
+const pkg = require('../package.json');
+const UPDATE_INTERVAL = 1000 * 60 * 60 * 12;
+exports.lastUpdateCheck = 0;
+exports.checkForUpdates = () => {
+  if (!process.env.YTDL_NO_UPDATE && !pkg.version.startsWith('0.0.0-') &&
+    Date.now() - exports.lastUpdateCheck >= UPDATE_INTERVAL) {
+    exports.lastUpdateCheck = Date.now();
+    return miniget('https://api.github.com/repos/fent/node-ytdl-core/releases/latest', {
+      headers: { 'User-Agent': 'ytdl-core' },
+    }).text().then(response => {
+      if (JSON.parse(response).tag_name !== `v${pkg.version}`) {
+        console.warn('\x1b[33mWARNING:\x1B[0m ytdl-core is out of date! Update with "npm install ytdl-core@latest".');
+      }
+    }, err => {
+      console.warn('Error checking for updates:', err.message);
+      console.warn('You can disable this check by setting the `YTDL_NO_UPDATE` env variable.');
+    });
+  }
+  return null;
+};
+
+}).call(this)}).call(this,require('_process'))
+},{"../package.json":120,"_process":48,"miniget":109}],120:[function(require,module,exports){
+module.exports={
+  "name": "ytdl-core",
+  "description": "YouTube video downloader in pure javascript.",
+  "keywords": [
+    "youtube",
+    "video",
+    "download"
+  ],
+  "version": "4.9.1",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/fent/node-ytdl-core.git"
+  },
+  "author": "fent <fentbox@gmail.com> (https://github.com/fent)",
+  "contributors": [
+    "Tobias Kutscha (https://github.com/TimeForANinja)",
+    "Andrew Kelley (https://github.com/andrewrk)",
+    "Mauricio Allende (https://github.com/mallendeo)",
+    "Rodrigo Altamirano (https://github.com/raltamirano)",
+    "Jim Buck (https://github.com/JimmyBoh)"
+  ],
+  "main": "./lib/index.js",
+  "types": "./typings/index.d.ts",
+  "files": [
+    "lib",
+    "typings"
+  ],
+  "scripts": {
+    "test": "nyc --reporter=lcov --reporter=text-summary npm run test:unit",
+    "test:unit": "mocha --ignore test/irl-test.js test/*-test.js --timeout 4000",
+    "test:irl": "mocha --timeout 16000 test/irl-test.js",
+    "lint": "eslint ./",
+    "lint:fix": "eslint --fix ./",
+    "lint:typings": "tslint typings/index.d.ts",
+    "lint:typings:fix": "tslint --fix typings/index.d.ts"
+  },
+  "dependencies": {
+    "m3u8stream": "^0.8.3",
+    "miniget": "^4.0.0",
+    "sax": "^1.1.3"
+  },
+  "devDependencies": {
+    "@types/node": "^13.1.0",
+    "assert-diff": "^3.0.1",
+    "dtslint": "^3.6.14",
+    "eslint": "^6.8.0",
+    "mocha": "^7.0.0",
+    "muk-require": "^1.2.0",
+    "nock": "^13.0.4",
+    "nyc": "^15.0.0",
+    "sinon": "^9.0.0",
+    "stream-equal": "~1.1.0",
+    "typescript": "^3.9.7"
+  },
+  "engines": {
+    "node": ">=10"
+  },
+  "license": "MIT"
+}
+
+},{}]},{},[102]);
