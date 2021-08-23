@@ -2,7 +2,7 @@
 # yarn lockfile v1
 
 
-"@electron-forge/async-ora@6.0.0-beta.59":
+"@electron-forge/async-ora@^6.0.0-beta.59", "@electron-forge/async-ora@6.0.0-beta.59":
   "integrity" "sha512-vF60XyjHCyoyXHgkDi/tZy+OB9K6oSBio2at7B4pwZLO6nqstofkeAB+Gz/XUsVj9Nim+vHKtyXPzE0BTXQkZQ=="
   "resolved" "https://registry.npmjs.org/@electron-forge/async-ora/-/async-ora-6.0.0-beta.59.tgz"
   "version" "6.0.0-beta.59"
@@ -29,7 +29,7 @@
     "inquirer" "^8.0.0"
     "semver" "^7.2.1"
 
-"@electron-forge/core@6.0.0-beta.59":
+"@electron-forge/core@^6.0.0-beta.59", "@electron-forge/core@6.0.0-beta.59":
   "integrity" "sha512-DRls31VQdVqGlna9EviHGKPchTkcbYPsRjOHSTrpksyOBQGck7for/hD1sxFREQ0r1qfKMR4xtmXbpXqzD8AyQ=="
   "resolved" "https://registry.npmjs.org/@electron-forge/core/-/core-6.0.0-beta.59.tgz"
   "version" "6.0.0-beta.59"
