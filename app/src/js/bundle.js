@@ -13131,7 +13131,8 @@ var utils = module.exports = {
         if (str instanceof Buffer) str = '' + str;
         if (!str || str.length === 0) return;
 
-        var newLines = str.split(nlRegexp);
+        str = str.toString('utf-8');
+				var newLines = str.split(nlRegexp);
 
         if (newLines.length === 1) {
           if (current !== null) {
@@ -32949,7 +32950,6 @@ const mergeMediaFiles = async (title, outPath, metadata) => {
     ];
 
     process.outputOptions(...outputOptions);
-
 
     // process.on('start', command => {
     //     console.log(command);

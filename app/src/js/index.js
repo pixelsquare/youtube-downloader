@@ -250,7 +250,6 @@ const mergeMediaFiles = async (title, outPath, metadata) => {
 
     process.outputOptions(...outputOptions);
 
-
     // process.on('start', command => {
     //     console.log(command);
     //     // cliprogress.start(100, 0, { filename: title, speed: "N/A" });
