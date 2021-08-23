@@ -100,7 +100,7 @@ class YoutubeDownloader {
         }
         else {
             // Convert string quality to itag number
-            self.options.quality = quality.filter(filter => filter.quality === self.options.quality)[0].value;
+            self.options.quality = qualityList.filter(filter => filter.quality === self.options.quality)[0].itag;
         }
 
         metadata.title = info.videoDetails.media.song || info.videoDetails.title;
