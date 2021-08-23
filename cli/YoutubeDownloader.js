@@ -11,7 +11,6 @@ const speedometer = require('speedometer');
 const sanitize = require('sanitize-filename');
 const truncate = require('smart-truncate');
 
-const { exec } = require('child_process');
 const { SingleBar, Presets } = require('cli-progress');
 const downloader = require('./lib/index.js');
 
@@ -209,25 +208,19 @@ class YoutubeDownloader {
         const outputPath = path.join(self.options.outputPath, sanitize(title + '.' + self.options.ext));
 
         await self.mergeMediaFiles(title, metadata);
-
-        const ffprobePath = path.resolve('../ffmpeg/bin/ffprobe.exe');
-        const command = `${ffprobePath} -v quiet -print_format json -show_format -show_streams "${outputPath}"`;
         
         const promise = new Promise((resolve) => {
-            exec(command, (err, stdout, stderr) => {
+            ffmpeg.ffprobe(outputPath, (err, data) => {
                 if(err) {
                     console.log('\n' + chalk.red.bold(err));
-                    resolve();
                     return;
                 }
     
-                const videoDetails = JSON.parse(stdout);
+                const audio = data.streams.filter(filter => filter.codec_type === 'audio')[0];
+                const video = data.streams.filter(filter => filter.codec_type === 'video')[0];
     
-                const audio = videoDetails.streams.filter(filter => filter.codec_type === 'audio')[0];
-                const video = videoDetails.streams.filter(filter => filter.codec_type === 'video')[0];
+                result.outputPath = data.format.filename;
     
-                result.outputPath = videoDetails.format.filename;
-
                 if(self.options.isMp3) {
                     result.info = {
                         codec: audio.codec_name,
@@ -244,14 +237,14 @@ class YoutubeDownloader {
                         width: video.width,
                         height: video.height,
                         aspectRatio: video.display_aspect_ratio,
-                        size: toMB(videoDetails.format.size) + ' MB',
-                        duration: videoDetails.format.duration,
+                        size: toMB(data.format.size) + ' MB',
+                        duration: data.format.duration,
                         bitrate: video.bit_rate,
                         fps: video.r_frame_rate
                     };
                 }
 
-                resolve();
+                resolve(data);
             });
         });
 
@@ -283,6 +276,29 @@ class YoutubeDownloader {
         const audioPath = path.join(self.options.outputPath, 'a.mp4');
         const outputPath = path.join(self.options.outputPath, sanitize(title + '.' + self.options.ext));
 
+        var videoWidth, videoHeight, aspectRatio = 0;
+
+        const videoPromise = new Promise((resolve) => {
+            ffmpeg.ffprobe(videoPath, (err, data) => {
+                if(err) {
+                    console.log('\n' + chalk.red.bold(err));
+                    return;
+                }
+
+                const video = data.streams.filter(filter => filter.codec_type === 'video')[0];
+
+                if(video) {
+                    videoWidth = video.width;
+                    videoHeight = video.height;
+                    aspectRatio = video.display_aspect_ratio;
+                }
+
+                resolve(data);
+            });
+        });
+
+        await videoPromise;
+
         var eta = 0;
         var speed = speedometer(5000);
         const toMB = i => (parseInt(i) / 1024).toFixed(2); // KB to MB
@@ -300,6 +316,9 @@ class YoutubeDownloader {
             process.addInput(audioPath);
             process.preset(self.options.preset);
         }
+
+        process.withSize(`${videoWidth}x${videoHeight}`);
+        process.withAspect(aspectRatio);
 
         const outputOptions = [
             '-id3v2_version', '4',

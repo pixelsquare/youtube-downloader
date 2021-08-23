@@ -32905,7 +32905,7 @@ const download = async (info, itag, outPath) => {
     setActionPanelActive(false);
     setActionResultActive(true);
 
-    setActionResult('DONE!', () => {
+    setActionResult('Download Complete!', () => {
         setActionPanelActive(true);
         setActionLoaderActive(false);
         setActionResultActive(false);
@@ -32926,8 +32926,28 @@ const mergeMediaFiles = async (title, outPath, metadata) => {
     const audioPath = path.join(outPath, 'a.mp4');
     const outputPath = path.join(outPath, sanitize(title + '.mp4'));
 
-    console.log(videoPath);
-    console.log(audioPath);
+    var videoWidth, videoHeight, aspectRatio = 0;
+
+    const videoPromise = new Promise((resolve) => {
+        ffmpeg.ffprobe(videoPath, (err, data) => {
+            if(err) {
+                console.log('\n' + chalk.red.bold(err));
+                return;
+            }
+
+            const video = data.streams.filter(filter => filter.codec_type === 'video')[0];
+
+            if(video) {
+                videoWidth = video.width;
+                videoHeight = video.height;
+                aspectRatio = video.display_aspect_ratio;
+            }
+
+            resolve(data);
+        });
+    });
+
+    await videoPromise;
 
     var eta = 0;
     var speed = speedometer(5000);
@@ -32940,6 +32960,9 @@ const mergeMediaFiles = async (title, outPath, metadata) => {
     process.addInput(videoPath);
     process.addInput(audioPath);
     process.preset('mid-res');
+    
+    process.withSize(`${videoWidth}x${videoHeight}`);
+    process.withAspect(aspectRatio);
 
     const outputOptions = [
         '-id3v2_version', '4',
