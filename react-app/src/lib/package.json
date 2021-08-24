@@ -1,0 +1,14 @@
+{
+  "name": "youtube-downloader",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha"
+  },
+  "author": "pixelsquare (a.ganzon)",
+  "license": "MIT",
+  "devDependencies": {
+    "ytdl-core": "^4.9.1"
+  }
+}
