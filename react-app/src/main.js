@@ -12,6 +12,8 @@ const createWindow = () => {
     width: 800,
     height: 600,
     center: true,
+    resizable: false,
+    maximizable: false,
     title: 'Youtube Downloader',
     // icon: path.join(__dirname, 'assets/icons/png/icon.png'),
     webPreferences: {
