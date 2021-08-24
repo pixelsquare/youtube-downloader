@@ -4,11 +4,9 @@ const ytdl = require('ytdl-core');
 
 module.exports = {
     getURLInfo: async (url) => {
-        var info = null;
-
         if(url && ytdl.validateURL(url)) {
             try {
-                info = await ytdl.getInfo(url);
+                return await ytdl.getInfo(url);
             }
             catch(err) {
                 const error = {
@@ -21,14 +19,18 @@ module.exports = {
             }
         }
 
-        return info;
+        const error = {
+            function: 'getURLInfo', 
+            message: 'Invalid URL', 
+            payload: url
+        };
+
+        return Promise.reject(error);
     },
     getURLBasicInfo: async (url) => {
-        var info = null;
-
         if(url && ytdl.validateURL(url)) {
             try {
-                info = await ytdl.getBasicInfo(url);
+                return await ytdl.getBasicInfo(url);
             }
             catch(err) {
                 const error = {
@@ -41,15 +43,19 @@ module.exports = {
             }
         }
 
-        return info; 
+        const error = {
+            function: 'getURLInfo', 
+            message: 'Invalid URL', 
+            payload: url
+        };
+
+        return Promise.reject(error);
     },
     getVideoDetails: async (url) => {
-        var info = null;
-
         if(url && ytdl.validateURL(url)) {
             try {
-                info = await ytdl.getInfo(url);
-                return info = info.videoDetails;
+                const info = await ytdl.getInfo(url);
+                return info.videoDetails;
             }
             catch(err) {
                 const error = {
@@ -62,7 +68,13 @@ module.exports = {
             }
         }
 
-        return info;
+        const error = {
+            function: 'getURLInfo', 
+            message: 'Invalid URL', 
+            payload: url
+        };
+
+        return Promise.reject(error);
     },
     getAvailableQuality: (info) => {
         var qualityList = [];
