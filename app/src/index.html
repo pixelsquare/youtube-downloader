@@ -28,16 +28,15 @@
         <main class="container d-flex flex-column px-0 py-3">
 
           <!--Input field for Youtube URL-->
-          <div class="input-field"">
+          <div class="input-field">
             <input type="text" id="yt-url">
             <label for="yt-url">Youtube URL</label>
           </div>
 
           <!-- Youtube URL Information-->
-          <div class="card horizontal flex-row">
-
+          <div id="card-main" class="card horizontal flex-row">
             <div class="card-image">
-              <img id="vid-thumbnail" src="https://picsum.photos/1920/1080" alt="" srcset="">
+              <img id="vid-thumbnail" src="" alt="" srcset="">
             </div>
 
             <div class="card-stacked">
@@ -50,7 +49,7 @@
                 <a href="#" class="dropdown-trigger btn btn-primary shadow-none px-2" onclick="this.blur();" data-target="quality-dropdown">Download
                   <i class="material-icons right ms-2">keyboard_arrow_down</i>
                 </a>
-                <ul id="quality-dropdown" class="dropdown-content">
+                <ul id="quality-dropdown" class="dropdown-content" style="max-height: 250px;">
                 </ul>
               </div>
 
@@ -68,9 +67,12 @@
               </div>
 
             </div>
+          </div>
 
-            <!-- Video loader -->
-            <!-- <div class="card-loader d-flex mx-auto">
+          <!-- Video loader -->
+          <div id="card-loader" class="card horizontal flex-column">
+
+            <div class="card-stacked m-auto">
               <div class="preloader-wrapper active">
                 <div class="spinner-layer">
                   <div class="circle-clipper left">
@@ -84,12 +86,16 @@
                   </div>
                 </div>
               </div>
-            </div> -->
+            </div>
 
-            <!-- <div class="card-fail d-flex flex-column mx-auto">
-              <i class="material-icons center">mood_bad</i>
-              <span class="fs-2">Unable to find URL.</span>
-            </div> -->
+          </div>
+
+          <div id="card-result" class="card horizontal flex-row">
+
+            <div class="card-stacked d-flex flex-row m-auto">
+              <i class="material-icons center m-2" style="font-size: 50px; height: 40px; line-height: 40px;">mood_bad</i>
+              <span class="fs-2 m-2"></span>
+            </div>
 
           </div>
 

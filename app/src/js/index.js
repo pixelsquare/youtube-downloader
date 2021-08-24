@@ -11,10 +11,10 @@ const ffmpeg = require('fluent-ffmpeg');
 const speedometer = require('speedometer');
 const sanitize = require('sanitize-filename');
 
-const downloader = require('./../../../lib/index.js');
+const downloader = require('./../../lib/index.js');
 window.$ = window.jQuery = require('jquery');
 
-const isDevelopment = false;
+const isDevelopment = true;
 
 const setCardInfo = (info) => {
     const titleElement = document.querySelector('#vid-title');
@@ -229,7 +229,7 @@ const mergeMediaFiles = async (title, outPath, metadata) => {
     const videoPromise = new Promise((resolve) => {
         ffmpeg.ffprobe(videoPath, (err, data) => {
             if(err) {
-                console.log('\n' + chalk.red.bold(err));
+                console.log(err);
                 return;
             }
 
@@ -364,6 +364,41 @@ const setActionResult = (msg, callback) => {
     };
 };
 
+const setCardMainActive = (active) => {
+    if(active) {
+        $('#card-main').show();
+    }
+    else {
+        $('#card-main').hide();
+    } 
+};
+
+const setCardLoaderActive = (active) => {
+    if(active) {
+        $('#card-loader').show();
+    }
+    else {
+        $('#card-loader').hide();
+    } 
+};
+
+const setCardResultActive = (active) => {
+    if(active) {
+        $('#card-result').show();
+    }
+    else {
+        $('#card-result').hide();
+    } 
+};
+
+const setCardResult = (msg) => {
+    const resultText = document.querySelector('#card-result > .card-stacked > span');
+
+    if(resultText) {
+        resultText.innerHTML = msg;
+    }
+};
+
 window.addEventListener('DOMContentLoaded', e => {
     console.log('DOM loaded');
     M.AutoInit();
@@ -379,22 +414,76 @@ window.addEventListener('DOMContentLoaded', e => {
         alignment: 'right'
      });
 
+     setCardMainActive(false);
+     setCardLoaderActive(false);
+     setCardResultActive(false);
      
      setActionPanelActive(true);
      setActionLoaderActive(false);
      setActionResultActive(false);
 
-    // downloader.getURLInfo('https://www.youtube.com/watch?v=LXb3EKWsInQ').then(result => {
-    downloader.getURLInfo('https://www.youtube.com/watch?v=ig3Qa6IINYo').then(result => {
-        setCardInfo({
-            title: result.videoDetails.title,
-            description: result.videoDetails.description,
-            thumbnail: result.videoDetails.thumbnails[result.videoDetails.thumbnails.length - 1].url,
-            qualityList: downloader.getAvailableQuality(result),
-            outputPath: path.resolve('output'),
-            videoInfo: result
-        })
+     const urlInput = document.querySelector('#yt-url');
+     urlInput.addEventListener('input', e => {    
+        const url = e.target.value;
+        setTimeout(() => {    
+            if(url) {
+                setCardLoaderActive(true);
+                setCardMainActive(false);
+                setCardResultActive(false);
+                
+                downloader.getURLInfo(url)
+                .then(result => {
+                    if(result) {
+                        setCardInfo({
+                            title: result.videoDetails.title,
+                            description: result.videoDetails.description,
+                            thumbnail: result.videoDetails.thumbnails[result.videoDetails.thumbnails.length - 1].url,
+                            qualityList: downloader.getAvailableQuality(result),
+                            outputPath: path.resolve('output'),
+                            videoInfo: result
+                        });
+                        
+                        setCardMainActive(true);
+                        setCardLoaderActive(false);
+                        setCardResultActive(false);
+                    }
+                }).catch(err => {
+                    if(err) {
+                        setCardResult(err.message);
+                        setCardResultActive(true);
+                        setCardLoaderActive(false);
+                        setCardMainActive(false);
+                    }
+                });
+            }
+            else {
+                setCardMainActive(false);
+                setCardLoaderActive(false);
+                setCardResultActive(false);
+                
+                setActionPanelActive(true);
+                setActionLoaderActive(false);
+                setActionResultActive(false);
+            }
+        }, 500);
      });
+
+    //  $('#yt-url').on('input', event => {
+    //      console.log($(this.val()));
+
+    //  });
+
+    // downloader.getURLInfo('https://www.youtube.com/watch?v=LXb3EKWsInQ').then(result => {
+    // downloader.getURLInfo('https://www.youtube.com/watch?v=ig3Qa6IINYo').then(result => {
+    //     setCardInfo({
+    //         title: result.videoDetails.title,
+    //         description: result.videoDetails.description,
+    //         thumbnail: result.videoDetails.thumbnails[result.videoDetails.thumbnails.length - 1].url,
+    //         qualityList: downloader.getAvailableQuality(result),
+    //         outputPath: path.resolve('output'),
+    //         videoInfo: result
+    //     })
+    //  });
 
 }, false);
 

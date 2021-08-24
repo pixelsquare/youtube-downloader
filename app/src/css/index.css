@@ -79,6 +79,11 @@ nav,
   line-height: 90px;
 }
 
+#card-loader > .card-stacked,
+#card-result > .card-stacked {
+  justify-content: center;
+}
+
 .percentage,
 .action-button {
   height: 90px;
@@ -89,8 +94,9 @@ nav,
   width: 100%;
 }
 
-.card-loader,
-.card-fail {
+#card-loader,
+#card-result {
+  width: 100%;
   min-height: 570px;
   align-items: center;
   justify-content: center;
@@ -130,8 +136,8 @@ footer > p {
     max-height: 200px;
   }
 
-  .card-loader,
-  .card-fail {
+  #card-loader,
+  #card-result {
     min-height: 280px;
   }
 
