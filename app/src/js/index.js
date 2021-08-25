@@ -141,43 +141,43 @@ const download = async (info, itag, outPath) => {
             const stream = await downloader.download(info, { quality: itag ? itag : 'highestvideo' });
             stream.pipe(fs.createWriteStream(path.join(outPath, sanitize('v.mp4'))));
 
-                var percentage = 0;
-                stream.on('progress', (chunkSize, downloaded, total) => {
-                    downloadData.totalDownloaded += parseInt(chunkSize);
-                    downloadData.delta += parseInt(chunkSize);
+            var percentage = 0;
+            stream.on('progress', (chunkSize, downloaded, total) => {
+                downloadData.totalDownloaded += parseInt(chunkSize);
+                downloadData.delta += parseInt(chunkSize);
 
-                    percentage = (downloaded / total) * 100;
-                    setProgressBarUpdate((totalPercentage + percentage) / maxPercentage);
-                    // console.log((totalPercentage + percentage) + ' ' + maxPercentage + ' ' + ((totalPercentage + percentage) / maxPercentage));
+                percentage = (downloaded / total) * 100;
+                setProgressBarUpdate((totalPercentage + percentage) / maxPercentage);
+                // console.log((totalPercentage + percentage) + ' ' + maxPercentage + ' ' + ((totalPercentage + percentage) / maxPercentage));
 
-                    if(Date.now() >= nextUpdate) {
-                        downloadData.eta = Math.round(total - downloaded) / downloadData.speed(chunkSize);
+                if(Date.now() >= nextUpdate) {
+                    downloadData.eta = Math.round(total - downloaded) / downloadData.speed(chunkSize);
 
-                        downloadData.delta = 0;
-                        nextUpdate = Date.now() + time;
-                    }
+                    downloadData.delta = 0;
+                    nextUpdate = Date.now() + time;
+                }
+            });
+
+            stream.on('data', data => {});
+
+            stream.on('error', err => {
+                const error = {
+                    message: 'An error occured while downloading the video file.',
+                    error: err,
+                    payload: ''
+                }
+
+                return Promise.reject(error);
+            });
+
+            const promise = new Promise((resolve) => {
+                stream.on('end', () => {
+                    totalPercentage += percentage;
+                    resolve();
                 });
+            });
 
-                stream.on('data', data => {});
-
-                stream.on('error', err => {
-                    const error = {
-                        message: 'An error occured while downloading the video file.',
-                        error: err,
-                        payload: ''
-                    }
-
-                    return Promise.reject(error);
-                });
-
-                const promise = new Promise((resolve) => {
-                    stream.on('end', () => {
-                        totalPercentage += percentage;
-                        resolve();
-                    });
-                });
-
-                await promise;
+            await promise;
         }
     ];
 

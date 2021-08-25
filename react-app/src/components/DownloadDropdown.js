@@ -1,15 +1,17 @@
 import React from 'react'
+import GetAppRoundedIcon from '@material-ui/icons/GetAppRounded';
+import ExpandMoreRoundedIcon from '@material-ui/icons/ExpandMoreRounded';
 import { Button } from '@material-ui/core';
 import { makeStyles } from '@material-ui/core/styles';
-import ExpandMoreRoundedIcon from '@material-ui/icons/ExpandMoreRounded';
+
 
 const useStyles = makeStyles((theme) => ({
     root: {},
     dropdown: {
         position: 'absolute',
+        minWidth: '165px',
         maxHeight: '200px',
         overflowY: 'auto',
-        minWidth: '0'
     },
 }));
 
@@ -25,6 +27,7 @@ const DownloadDropdown = (props) => {
                 variant="outlined" 
                 size="medium" 
                 color="primary"
+                startIcon={<GetAppRoundedIcon />}
                 endIcon={<ExpandMoreRoundedIcon />}>
                     Download
             </Button>

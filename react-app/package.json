@@ -45,11 +45,16 @@
   "dependencies": {
     "@material-ui/core": "^4.12.3",
     "@material-ui/icons": "^4.11.2",
+    "async": "^3.2.1",
     "bootstrap": "^5.1.0",
     "electron-squirrel-startup": "^1.0.0",
+    "fluent-ffmpeg": "^2.1.2",
     "react": "^17.0.2",
+    "react-custom-scrollbar": "^1.0.0",
     "react-dom": "^17.0.2",
-    "react-scripts": "4.0.3"
+    "react-scripts": "4.0.3",
+    "sanitize-filename": "^1.6.3",
+    "speedometer": "^1.1.0"
   },
   "devDependencies": {
     "@electron-forge/cli": "^6.0.0-beta.59",
