@@ -12,7 +12,8 @@ const useStyles = makeStyles((theme) => ({
         flexDirection: 'row'
     },
     media: {
-        maxWidth: '150px'
+        maxWidth: '150px',
+        minWidth: '150px'
     },
     content: {
         display: 'flex',

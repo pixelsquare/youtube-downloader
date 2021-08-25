@@ -49,6 +49,7 @@
     "bootstrap": "^5.1.0",
     "electron-squirrel-startup": "^1.0.0",
     "fluent-ffmpeg": "^2.1.2",
+    "moment": "^2.29.1",
     "react": "^17.0.2",
     "react-custom-scrollbar": "^1.0.0",
     "react-dom": "^17.0.2",

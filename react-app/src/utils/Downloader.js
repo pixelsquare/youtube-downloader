@@ -5,6 +5,7 @@ const async = require('async');
 const ffmpeg = require('fluent-ffmpeg');
 const speedometer = require('speedometer')
 const sanitize = require('sanitize-filename');
+const moment = require('moment');
 
 const downloader = require('./../lib/index.js');
 
@@ -179,7 +180,11 @@ const mergeMediaFiles = async (title, outPath, metadata, progressCb) => {
     const audioPath = path.join(outPath, 'a.mp4');
     const outputPath = path.join(outPath, sanitize(title + '.mp4'));
 
-    var videoWidth, videoHeight, aspectRatio = 0;
+    var videoWidth = 0;
+    var videoHeight = 0;
+    var aspectRatio = 0;
+    var videoSize = 0;
+    var videoDuration = 0;
 
     const videoPromise = new Promise((resolve) => {
         ffmpeg.ffprobe(videoPath, (err, data) => {
@@ -192,6 +197,11 @@ const mergeMediaFiles = async (title, outPath, metadata, progressCb) => {
                 }
 
                 return Promise.reject(error);
+            }
+
+            if(data.format) {
+                videoSize = data.format.size;
+                videoDuration = data.format.duration;
             }
 
             const video = data.streams.filter(filter => filter.codec_type === 'video')[0];
@@ -208,8 +218,35 @@ const mergeMediaFiles = async (title, outPath, metadata, progressCb) => {
 
     await videoPromise;
 
+    var audioSize = 0;
+    var audioDuration = 0;
+
+    const audioPromise = new Promise((resolve) => {
+        ffmpeg.ffprobe(audioPath, (err, data) => {
+            if(err) {
+                const error = {
+                    function: 'mergeMediaFiles',
+                    message: err.message,
+                    error: err,
+                    payload: ''
+                }
+
+                return Promise.reject(error);
+            }
+
+            if(data.format) {
+                audioSize = data.format.size;
+                audioDuration = data.format.duration;
+            }
+
+            resolve(data);
+        });
+    });
+
+    await audioPromise;
+
     const progressData = {
-        eta: -1,
+        eta: 0,
         delta: 0,
         progress: 0,
         speed: 0,
@@ -217,7 +254,7 @@ const mergeMediaFiles = async (title, outPath, metadata, progressCb) => {
     };
 
 
-    const speed = speedometer(5000);
+    const speed = speedometer(20000);
     const toMB = i => (parseInt(i) / 1024).toFixed(2); // KB to MB
 
     const process = ffmpeg({
@@ -256,24 +293,37 @@ const mergeMediaFiles = async (title, outPath, metadata, progressCb) => {
 
     var percentage = 0;
 
+    const audioDurationMs = audioDuration * 1000;
+    const videoDurationMs = videoDuration * 1000;
+    const totalDurationMs = Math.max(audioDurationMs, videoDurationMs);
+
+    var oldTimeMs = 0;
+    var deltaTimeMs = 0;
+
     process.on('progress', info => {
         const currentKbps = !isNaN(info.currentKbps) ? info.currentKbps : 0;
         const targetSize = !isNaN(info.targetSize) ? info.targetSize : 0;
+
         progressData.totalDownloaded += !isNaN(info.currentKbps) ? info.currentKbps : 0;
-        progressData.delta = !isNaN(info.currentKbps) ? info.currentKbps : 0;
 
         percentage = info.percent;
         progressData.progress = (totalPercentage + percentage) / maxPercentage;
         // console.log((totalPercentage + percentage) + ' ' + maxPercentage + ' ' + ((totalPercentage + percentage) / maxPercentage));
 
+        var timemarkMs = moment(info.timemark, 'HH:mm:ss.SSS').diff(moment().startOf('day'), 'milliseconds');
+        deltaTimeMs = timemarkMs - oldTimeMs;
+        progressData.delta += deltaTimeMs;
+
         if(Date.now() >= nextUpdate) {
-            // console.log(`delta: ${progressData.delta} ${speed(progressData.delta)}`);
-            // progressData.eta = Math.round(currentKbps - targetSize) / speed(progressData.delta);
+            progressData.eta = progressData.delta > 0 ? (Math.round(totalDurationMs - timemarkMs) / speed(progressData.delta)) * 10: 0; // Mutliplied by 10 as a kicker constant
+            console.log(`${progressData.eta} = ${totalDurationMs} - ${timemarkMs} / ${speed(progressData.delta)} ${progressData.delta} ${deltaTimeMs}`);
             progressData.speed = toMB(speed(currentKbps));
             progressCb(progressData);
             progressData.delta = 0;
             nextUpdate = Date.now() + time;
         }
+
+        oldTimeMs = timemarkMs;
     });
 
     process.saveToFile(outputPath);
