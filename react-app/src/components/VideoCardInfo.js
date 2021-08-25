@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import DownloadDropdown from './DownloadDropdown';
 import { makeStyles } from '@material-ui/core/styles';
-import { Card, CardActions, CardMedia, CardContent, Button, Typography } from '@material-ui/core';
-import ExpandMoreRoundedIcon from '@material-ui/icons/ExpandMoreRounded';
+import { Card, CardActions, CardMedia, CardContent, MenuItem, Typography } from '@material-ui/core';
 
 const useStyles = makeStyles((theme) => ({
     root: {
@@ -20,7 +20,9 @@ const useStyles = makeStyles((theme) => ({
     },
     info: {
         flexGrow: 1,
-        padding: '0.5rem'
+        padding: '1rem',
+        overflowY: 'hidden',
+        maxHeight: '227px'
     },
     title: {
         textAlign: 'left',
@@ -32,13 +34,22 @@ const useStyles = makeStyles((theme) => ({
         textOverflow: 'ellipsis'
     },
     description: {
+        height: '180px',
+        overflowY: 'auto',
+        paddingBottom: '1rem',
         flexGrow: 1,
-        textAlign: 'left'
+        textAlign: 'left',
     },
     actionbar: {
+        padding: '1rem',
         backgroundColor: 'transparent',
         boxShadow: 'none',
         borderTop: '1px solid rgba(0, 0, 0, 0.14)'
+    },
+    menuItem: {
+        backgroundColor: '#f5f5f5',
+        boxShadow: 'none',
+        borderBottom: '1px solid rgba(0, 0, 0, 0.14)',
     }
 }));
 
@@ -46,8 +57,16 @@ const VideoCardInfo = (props) => {
     const classes = useStyles();
     const { info } = props;
 
+    useEffect(() => {
+        console.log(info.qualityList);
+    }, [info.qualityList]);
+
+    const handleDropdownClick = e => {
+        console.log(e.target.value);
+    };
+
     return (
-        <Card className={classes.root}>
+        <Card raised={true} className={classes.root}>
             <CardMedia 
                 component="img"
                 alt=""
@@ -64,13 +83,13 @@ const VideoCardInfo = (props) => {
                 </CardContent>
 
                 <CardActions className={classes.actionbar}>
-                    <Button 
-                        variant="outlined" 
-                        size="medium" 
-                        color="primary"
-                        endIcon={<ExpandMoreRoundedIcon />}>
-                            Download
-                    </Button>
+                <DownloadDropdown onClick={handleDropdownClick}>
+                    { 
+                        info.qualityList ? info.qualityList.map(q => {
+                            return <MenuItem value={q.itag} className={classes.menuItem}>{q.quality}</MenuItem>;
+                        }) : null
+                    }
+                </DownloadDropdown>
                 </CardActions>
             </CardContent>
         </Card>

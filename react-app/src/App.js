@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Root from './navigation/Root';
 import URLInput from './components/URLInput';
 import VideoCardInfo from './components/VideoCardInfo';
@@ -11,6 +11,9 @@ import 'bootstrap/dist/js/bootstrap.min.js';
 
 const downloader = require('./lib/index.js');
 
+// https://www.youtube.com/watch?v=LXb3EKWsInQ
+// https://www.youtube.com/watch?v=ig3Qa6IINYo
+
 function App() {
 
   const [url, setUrl] = useState('');
@@ -18,21 +21,21 @@ function App() {
   const [errorMessage, setErrorMessage] = useState('');
   const [videoInfo, setVideoInfo] = useState({});
 
-  // useEffect(() => {
+  useEffect(() => {
 
-  //   downloader.getURLInfo('https://www.youtube.com/watch?v=ig3Qa6IINYo').then(result => {
-  //       console.log(result);
-  //       setVideoInfo({
-  //         title: result.videoDetails.title,
-  //         description: result.videoDetails.description,
-  //         imageUrl: result.videoDetails.thumbnails[result.videoDetails.thumbnails.length - 1].url
-  //       });
+    // downloader.getURLInfo('https://www.youtube.com/watch?v=ig3Qa6IINYo').then(result => {
+    //     console.log(result);
+    //     setVideoInfo({
+    //       title: result.videoDetails.title,
+    //       description: result.videoDetails.description,
+    //       imageUrl: result.videoDetails.thumbnails[result.videoDetails.thumbnails.length - 1].url
+    //     });
 
-  //   }).catch(err => {
+    // }).catch(err => {
 
-  //   });
+    // });
 
-  // }, []);
+  }, []);
 
   var timeoutId = null;
   const handleChange = e => {
@@ -52,11 +55,11 @@ function App() {
           setVideoInfo({
             title: result.videoDetails.title,
             description: result.videoDetails.description,
-            imageUrl: result.videoDetails.thumbnails[result.videoDetails.thumbnails.length - 1].url
+            imageUrl: result.videoDetails.thumbnails[result.videoDetails.thumbnails.length - 1].url,
+            qualityList: downloader.getAvailableQuality(result)
           });
     
         }).catch(err => {
-          console.log(err);
           setErrorMessage(err.message);
           setIsLoading(false);
         });
