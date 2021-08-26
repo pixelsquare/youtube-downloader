@@ -5,6 +5,7 @@ import PauseRoundedIcon from '@material-ui/icons/PauseRounded';
 import PlayArrowRoundedIcon from '@material-ui/icons/PlayArrowRounded';
 import { makeStyles, withStyles } from '@material-ui/core/styles';
 import { Card, CardActions, CardMedia, CardContent, MenuItem, LinearProgress, IconButton, Typography } from '@material-ui/core';
+import { stopDownload } from './../utils/Downloader';
 
 const useStyles = makeStyles((theme) => ({
     root: {
@@ -50,7 +51,7 @@ const useStyles = makeStyles((theme) => ({
         backgroundColor: 'transparent',
         boxShadow: 'none',
         borderTop: '1px solid rgba(0, 0, 0, 0.14)',
-        maxHeight: '70px'
+        maxHeight: '69px'
     },
     icon: {
         margin: theme.spacing(1)
@@ -68,6 +69,9 @@ const useStyles = makeStyles((theme) => ({
     },
     progressInfo: {
         padding: '0.2rem 0.5rem'
+    },
+    downloadComplete: {
+        margin: 'auto'
     }
 }));
 
@@ -76,7 +80,6 @@ const StyledProgressBar = withStyles((theme) => ({
         height: '5px',
         width: '100%',
         borderRadius: '5px',
-        // translate: 'translate(-100px, 0)'
     },
     bar: {
         borderRadius: '5px',
@@ -88,17 +91,18 @@ const StyledProgressBar = withStyles((theme) => ({
 const VideoCardInfo = (props) => {
     const classes = useStyles();
     const { videoInfo, downloadInfo, isDownloading, onDownload } = props;
-    const [isPaused, setIsPaused] = useState(false);
+    // const [isPaused, setIsPaused] = useState(false);
 
     const renderDownloadButton = () => {
         return (
-            <DownloadDropdown onClick={handleClick}>
+            <DownloadDropdown onClick={onDownload}>
                 { 
                     videoInfo.qualityList ? videoInfo.qualityList.map(q => {
                         return <MenuItem divider value={q.itag}>{q.quality}</MenuItem>;
                     }) : null
                 }
-            </DownloadDropdown>);
+            </DownloadDropdown>
+        );
     };
 
     const renderProgress = () => {
@@ -112,13 +116,23 @@ const VideoCardInfo = (props) => {
                         <Typography variant="caption" color="textSecondary" component="p" className={classes.progressInfo}>Speed: {downloadInfo.speed} Mb/s</Typography>
                     </div>
                 </div>
-                <IconButton aria-label="play-pause" size="small" className={classes.icon}>{isDownloading && !isPaused ? <PauseRoundedIcon /> : <PlayArrowRoundedIcon />}</IconButton>
-                <IconButton aria-label="close" size="small" className={classes.icon}><CloseRoundedIcon /></IconButton>
-            </React.Fragment>)
+                {/* <IconButton aria-label="play-pause" size="small" className={classes.icon}>{isDownloading && !isPaused ? <PauseRoundedIcon /> : <PlayArrowRoundedIcon />}</IconButton> */}
+                <IconButton aria-label="close" size="small" onClick={stopDownload} className={classes.icon}><CloseRoundedIcon /></IconButton>
+            </React.Fragment>
+        );
     };
 
-    const handleClick = e => {
-        onDownload(e);
+    const renderDownloadComplete = () => {
+        return (
+            <React.Fragment>
+                <Typography variant="body1" component="p" className={classes.downloadComplete}>Download Complete!</Typography>
+                <IconButton aria-label="close" size="small" onClick={handleCompleteClose} className={classes.icon}><CloseRoundedIcon /></IconButton>
+            </React.Fragment>
+        );
+    };
+
+    const handleCompleteClose = e => {
+        e.preventDefault();
     };
 
     return (
@@ -143,7 +157,7 @@ const VideoCardInfo = (props) => {
                 </CardActions>
             </CardContent>
         </Card>
-    )
+    );
 };
 
 export default VideoCardInfo;

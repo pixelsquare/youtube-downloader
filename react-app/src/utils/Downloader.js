@@ -17,15 +17,21 @@ export const getURLInfo = async (url) => {
     return await downloader.getURLInfo(url);
 };
 
+var willStopDownload = false;
+export const stopDownload = () => {
+    willStopDownload = true;
+};
+
 var totalPercentage = 0;
 var maxPercentage = 0;
 
-const time = 1000; // Update time in milliseconds
-var nextUpdate = Date.now() + time;
+const timeMs = 1000;
+var nextUpdate = Date.now() + timeMs;
 
 export const download = async (info, itag, progressCb) => {
     var result = {};
     var metadata = {};
+    willStopDownload = false;
 
     const progressData = {
         eta: 0,
@@ -34,8 +40,6 @@ export const download = async (info, itag, progressCb) => {
         speed: 0,
         totalDownloaded: 0
     };
-
-
 
     var speed = speedometer(5000);
     const toMB = i => (parseInt(i) / 1024 / 1024).toFixed(2); // Byte to KB to MB
@@ -55,7 +59,7 @@ export const download = async (info, itag, progressCb) => {
             stream.pipe(fs.createWriteStream(path.join(path.resolve('output'), sanitize('a.mp4'))));
 
             var percentage = 0;
-            nextUpdate = Date.now() + time;
+            nextUpdate = Date.now() + timeMs;
             
             stream.on('progress', (chunkSize, downloaded, total) => {
                 progressData.totalDownloaded += parseInt(chunkSize);
@@ -65,12 +69,16 @@ export const download = async (info, itag, progressCb) => {
                 progressData.progress = percentage / maxPercentage;
                 // console.log(percentage + ' ' + maxPercentage + ' ' + (percentage / maxPercentage));
 
+                if(willStopDownload && !stream.destroyed) {
+                    stream.destroy();
+                }
+
                 if(Date.now() >= nextUpdate) {
-                    progressData.eta = Math.round(total - downloaded) / speed(progressData.delta);
+                    progressData.eta = (Math.round(total - downloaded) / speed(progressData.delta));
                     progressData.speed = toMB(speed(progressData.delta));
                     progressCb(progressData);
                     progressData.delta = 0;
-                    nextUpdate = Date.now() + time;
+                    nextUpdate = Date.now() + timeMs;
                 }
             });
 
@@ -103,7 +111,7 @@ export const download = async (info, itag, progressCb) => {
             stream.pipe(fs.createWriteStream(path.join(path.join(path.resolve('output')), sanitize('v.mp4'))));
 
             var percentage = 0;
-            nextUpdate = Date.now() + time;
+            nextUpdate = Date.now() + timeMs;
 
             stream.on('progress', (chunkSize, downloaded, total) => {
                 progressData.totalDownloaded += parseInt(chunkSize);
@@ -113,12 +121,16 @@ export const download = async (info, itag, progressCb) => {
                 progressData.progress = (totalPercentage + percentage) / maxPercentage;
                 // console.log((totalPercentage + percentage) + ' ' + maxPercentage + ' ' + ((totalPercentage + percentage) / maxPercentage));
 
+                if(willStopDownload && !stream.destroyed) {
+                    stream.destroy();
+                }
+
                 if(Date.now() >= nextUpdate) {
-                    progressData.eta = Math.round(total - downloaded) / speed(progressData.delta);
+                    progressData.eta = (Math.round(total - downloaded) / speed(progressData.delta));
                     progressData.speed = toMB(speed(progressData.delta));
                     progressCb(progressData);
                     progressData.delta = 0;
-                    nextUpdate = Date.now() + time;
+                    nextUpdate = Date.now() + timeMs;
                 }
             });
 
@@ -151,11 +163,62 @@ export const download = async (info, itag, progressCb) => {
 
     await async.series(tasks);
 
+    if(willStopDownload) {
+        return result;
+    }
+
     var title = info.videoDetails.title;
 
-    await mergeMediaFiles(title, path.join(path.resolve('output')), metadata, progressCb);
+    await mergeMediaFiles(title, path.resolve('output'), metadata, progressCb);
 
-    // result.filename = title;
+    const outputPath = path.join(__dirname, 'output', sanitize(title + '.mp4'));
+    const outPromise = new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(outputPath, (err, data) => {
+            if(err) {
+                const error = {
+                    function: 'download',
+                    error: err,
+                    message: err.message,
+                    payload: outputPath
+                };
+
+                return reject(error);
+            }
+            
+            const audio = data.streams.filter(filter => filter.codec_type === 'audio')[0];
+            const video = data.streams.filter(filter => filter.codec_type === 'video')[0];
+
+            result.outputPath = data.format.filename;
+
+            if(audio) {
+                result.audioInfo = {
+                    codec: audio.codec_name,
+                    channels: audio.channels,
+                    channelLayout: audio.channel_layout,
+                    duration: audio.duration,
+                    bitrate: audio.bit_rate,
+                    encoding: audio.tags.encoder
+                };
+            }
+
+            if(video) {
+                result.videoInfo = {
+                    codec: video.codec_name,
+                    width: video.width,
+                    height: video.height,
+                    aspectRatio: video.display_aspect_ratio,
+                    size: toMB(data.format.size) + ' MB',
+                    duration: data.format.duration,
+                    bitrate: video.bit_rate,
+                    fps: video.r_frame_rate
+                };
+            }
+
+            resolve(result);
+        });
+    });
+
+    result.filename = title;
     result.title = info.videoDetails.title;
     result.description = info.videoDetails.description;
     result.metadata = {
@@ -165,6 +228,7 @@ export const download = async (info, itag, progressCb) => {
         subscriberCount: info.videoDetails.author.subscriber_count
     };
 
+    await outPromise;
     return result;  
 };
 
@@ -314,13 +378,17 @@ const mergeMediaFiles = async (title, outPath, metadata, progressCb) => {
         deltaTimeMs = timemarkMs - oldTimeMs;
         progressData.delta += deltaTimeMs;
 
+        if(willStopDownload) {
+            process.kill('SIGKILL');
+            return Promise.reject('Aborted');
+        }
+        
         if(Date.now() >= nextUpdate) {
-            progressData.eta = progressData.delta > 0 ? (Math.round(totalDurationMs - timemarkMs) / speed(progressData.delta)) * 10: 0; // Mutliplied by 10 as a kicker constant
-            console.log(`${progressData.eta} = ${totalDurationMs} - ${timemarkMs} / ${speed(progressData.delta)} ${progressData.delta} ${deltaTimeMs}`);
+            progressData.eta = progressData.delta > 0 ? (Math.round(totalDurationMs - timemarkMs) / speed(progressData.delta)) * 10: 0;
             progressData.speed = toMB(speed(currentKbps));
             progressCb(progressData);
             progressData.delta = 0;
-            nextUpdate = Date.now() + time;
+            nextUpdate = Date.now() + timeMs;
         }
 
         oldTimeMs = timemarkMs;
@@ -344,7 +412,6 @@ const mergeMediaFiles = async (title, outPath, metadata, progressCb) => {
         process.on('end', (stdout, stderr) => {
             totalPercentage += percentage;
             progressCb(progressData);
-            // console.log(progressData);
             resolve();
         });
     });
